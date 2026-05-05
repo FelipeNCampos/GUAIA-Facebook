@@ -1,0 +1,114 @@
+services:
+  face-migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: alembic upgrade head
+    restart: on-failure:3
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      APP_LOG_LEVEL: ${APP_LOG_LEVEL:-INFO}
+      APP_LOG_JSON: ${APP_LOG_JSON:-true}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set in .env}
+      RABBITMQ_URL: ${RABBITMQ_URL:?RABBITMQ_URL must be set in .env}
+      ALEMBIC_CONNECT_RETRIES: ${ALEMBIC_CONNECT_RETRIES:-10}
+      ALEMBIC_CONNECT_RETRY_DELAY: ${ALEMBIC_CONNECT_RETRY_DELAY:-3}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  face-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: uvicorn face.api:app --host 0.0.0.0 --port 8000
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      APP_LOG_LEVEL: ${APP_LOG_LEVEL:-INFO}
+      APP_LOG_JSON: ${APP_LOG_JSON:-true}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set in .env}
+      RABBITMQ_URL: ${RABBITMQ_URL:?RABBITMQ_URL must be set in .env}
+    ports:
+      - "8000:8000"
+    depends_on:
+      face-migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  face-search-spider:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: python -m face.worker_runtime search
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      APP_LOG_LEVEL: ${APP_LOG_LEVEL:-INFO}
+      APP_LOG_JSON: ${APP_LOG_JSON:-true}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set in .env}
+      RABBITMQ_URL: ${RABBITMQ_URL:?RABBITMQ_URL must be set in .env}
+    depends_on:
+      face-migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  face-enrich-spider:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: python -m face.worker_runtime enrich
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      APP_LOG_LEVEL: ${APP_LOG_LEVEL:-INFO}
+      APP_LOG_JSON: ${APP_LOG_JSON:-true}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set in .env}
+      RABBITMQ_URL: ${RABBITMQ_URL:?RABBITMQ_URL must be set in .env}
+      PLAYWRIGHT_BROWSERS_PATH: ${PLAYWRIGHT_BROWSERS_PATH:-/ms-playwright}
+    volumes:
+      - playwright-browsers:/ms-playwright
+    depends_on:
+      face-migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:?RABBITMQ_DEFAULT_USER must be set in .env}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:?RABBITMQ_DEFAULT_PASS must be set in .env}
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB must be set in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+volumes:
+  postgres-data:
+  playwright-browsers:

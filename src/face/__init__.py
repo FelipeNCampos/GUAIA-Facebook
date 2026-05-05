@@ -1,0 +1,1 @@
+"""Facebook module for InfoPolitica."""
