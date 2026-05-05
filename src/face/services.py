@@ -6,7 +6,15 @@ from uuid import uuid4
 from common.logging import get_logger, set_log_context
 from sqlalchemy.exc import IntegrityError
 
-from face.models import CreateQueriesRequest, QueryCreateInput, QueryStatusResponse
+from face.models import (
+    CreateExportRequest,
+    CreateQueriesRequest,
+    ExportAcceptedResponse,
+    QueryCreateInput,
+    QueryExportsResponse,
+    QueryRecordsResponse,
+    QueryStatusResponse,
+)
 from face.queues import Publisher, QueueNames
 from face.repository import FaceJobRepository
 
@@ -141,6 +149,108 @@ class QueryService:
                 }
                 for event in events
             ],
+        )
+
+    def get_query_records(self, id_query: str) -> QueryRecordsResponse:
+        set_log_context(id_query=id_query)
+        records = self.repository.list_records(id_query)
+        return QueryRecordsResponse(
+            id_query=id_query,
+            records=[
+                {
+                    "id": record.id,
+                    "id_query": record.id_query,
+                    "url": record.url,
+                    "url_normalized": record.url_normalized,
+                    "category": record.category,
+                    "status": record.status,
+                    "payload": record.payload,
+                    "last_error": record.last_error,
+                    "created_at": record.created_at,
+                    "updated_at": record.updated_at,
+                }
+                for record in records
+            ],
+        )
+
+    def get_query_exports(self, id_query: str) -> QueryExportsResponse:
+        set_log_context(id_query=id_query)
+        exports = self.repository.list_exports(id_query)
+        return QueryExportsResponse(
+            id_query=id_query,
+            exports=[
+                {
+                    "id": export.id,
+                    "id_query": export.id_query,
+                    "export_format": export.export_format,
+                    "storage_path": export.storage_path,
+                    "status": export.status,
+                    "created_at": export.created_at,
+                    "completed_at": export.completed_at,
+                }
+                for export in exports
+            ],
+        )
+
+    async def create_export_request(
+        self,
+        id_query: str,
+        request: CreateExportRequest,
+    ) -> ExportAcceptedResponse:
+        set_log_context(id_query=id_query)
+        export = self.repository.create_export_request(
+            id_query=id_query,
+            export_format=request.export_format,
+        )
+        export_payload = {
+            "export_id": export.id,
+            "id_query": id_query,
+            "export_format": request.export_format,
+        }
+
+        try:
+            await self.publisher.publish_json(self.queue_names.export_request, export_payload)
+            await self.publisher.publish_json(
+                self.queue_names.job_events,
+                {
+                    "id_query": id_query,
+                    "event_type": "export.requested",
+                    "payload": export_payload,
+                },
+            )
+        except Exception as exc:
+            self.repository.update_export_status(export_id=export.id, status="enqueue_failed")
+            self.repository.add_event(
+                id_query=id_query,
+                event_type="export.enqueue_failed",
+                payload={
+                    "export_id": export.id,
+                    "export_format": request.export_format,
+                    "error": str(exc),
+                },
+            )
+            logger.exception(
+                "Failed to publish export request",
+                extra={"service": "face-api", "id_query": id_query},
+            )
+            raise
+
+        export = self.repository.update_export_status(export_id=export.id, status="requested")
+        self.repository.add_event(
+            id_query=id_query,
+            event_type="export.requested",
+            payload=export_payload,
+        )
+        logger.info(
+            "Export request accepted and published",
+            extra={"service": "face-api", "id_query": id_query},
+        )
+        return ExportAcceptedResponse(
+            export_id=export.id,
+            id_query=export.id_query,
+            export_format=export.export_format,
+            status=export.status,
+            created_at=export.created_at,
         )
 
     def _resolve_queries(self, request: CreateQueriesRequest) -> list[ResolvedQuery]:

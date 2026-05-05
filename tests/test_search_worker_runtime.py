@@ -20,6 +20,26 @@ class FakeConsumer:
         return None
 
 
+def test_search_worker_loop_waits_when_queue_is_empty(monkeypatch) -> None:
+    consumer = FakeConsumer([None])
+    sleep_calls: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+        import face.worker_runtime as worker_runtime
+
+        worker_runtime.running = False
+
+    monkeypatch.setattr("face.worker_runtime.asyncio.sleep", fake_sleep)
+
+    import face.worker_runtime as worker_runtime
+
+    worker_runtime.running = True
+    asyncio.run(run_search_worker_loop(consumer, poll_interval_seconds=0.25))
+
+    assert sleep_calls == [0.25]
+
+
 def test_search_worker_loop_dispatches_message_and_acks(monkeypatch) -> None:
     acked = {"value": False}
     rejected = {"value": False}

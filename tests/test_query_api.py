@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from db.base import Base
-from db.models import FaceJob, FaceJobEvent
+from db.models import FaceExport, FaceJob, FaceJobEvent, FaceRecord
 from face.api import app
 from face.queues import QueueNames
 from face.repository import FaceJobRepository
@@ -221,5 +221,146 @@ def test_publish_failure_marks_enqueue_failed_status(tmp_path) -> None:
 
     assert job.status_current == "enqueue_failed"
     assert [event.event_type for event in events] == ["query.created", "search.enqueue_failed"]
+
+    del app.state.query_service
+
+
+def test_get_query_records_returns_records_for_query(tmp_path) -> None:
+    db_path = tmp_path / "query_records.db"
+    service, _, session_factory = build_test_service(f"sqlite:///{db_path}")
+    app.state.query_service = service
+
+    with TestClient(app) as client:
+        create_response = client.post(
+            "/facebook/queries",
+            json={
+                "queries": [
+                    {
+                        "id_query": "query-records-1",
+                        "subject": "tema",
+                        "query_source": "api",
+                    }
+                ]
+            },
+        )
+
+    assert create_response.status_code == 202
+
+    with session_factory() as session:
+        session.add_all(
+            [
+                FaceRecord(
+                    id_query="query-records-1",
+                    url="https://www.facebook.com/foo/posts/1",
+                    url_normalized="https://www.facebook.com/foo/posts/1",
+                    category="post",
+                    status="discovered",
+                    payload={"search_page": 1},
+                ),
+                FaceRecord(
+                    id_query="query-records-1",
+                    url="https://www.facebook.com/foo/videos/2",
+                    url_normalized="https://www.facebook.com/foo/videos/2",
+                    category="video",
+                    status="enriched",
+                    payload={"likes": 10},
+                ),
+            ]
+        )
+        session.commit()
+
+    with TestClient(app) as client:
+        response = client.get("/facebook/queries/query-records-1/records")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id_query"] == "query-records-1"
+    assert len(body["records"]) == 2
+    assert body["records"][0]["category"] == "post"
+    assert body["records"][1]["status"] == "enriched"
+
+    del app.state.query_service
+
+
+def test_get_query_exports_and_create_export_request(tmp_path) -> None:
+    db_path = tmp_path / "query_exports.db"
+    service, publisher, session_factory = build_test_service(f"sqlite:///{db_path}")
+    app.state.query_service = service
+
+    with TestClient(app) as client:
+        create_response = client.post(
+            "/facebook/queries",
+            json={
+                "queries": [
+                    {
+                        "id_query": "query-exports-1",
+                        "subject": "tema",
+                        "query_source": "api",
+                    }
+                ]
+            },
+        )
+        export_response = client.post(
+            "/facebook/queries/query-exports-1/export",
+            json={"export_format": "json"},
+        )
+
+    assert create_response.status_code == 202
+    assert export_response.status_code == 202
+    export_body = export_response.json()
+    assert export_body["id_query"] == "query-exports-1"
+    assert export_body["export_format"] == "json"
+    assert export_body["status"] == "requested"
+
+    with session_factory() as session:
+        exports = (
+            session.query(FaceExport)
+            .filter(FaceExport.id_query == "query-exports-1")
+            .order_by(FaceExport.id.asc())
+            .all()
+        )
+        events = (
+            session.query(FaceJobEvent)
+            .filter(FaceJobEvent.id_query == "query-exports-1")
+            .order_by(FaceJobEvent.id.asc())
+            .all()
+        )
+
+    assert len(exports) == 1
+    assert exports[0].status == "requested"
+    assert publisher.messages[2][0] == "face.export.request"
+    assert publisher.messages[2][1]["id_query"] == "query-exports-1"
+    assert publisher.messages[3][0] == "face.job.events"
+    assert [event.event_type for event in events][-1] == "export.requested"
+
+    with TestClient(app) as client:
+        list_response = client.get("/facebook/queries/query-exports-1/exports")
+
+    assert list_response.status_code == 200
+    list_body = list_response.json()
+    assert list_body["id_query"] == "query-exports-1"
+    assert len(list_body["exports"]) == 1
+    assert list_body["exports"][0]["export_format"] == "json"
+    assert list_body["exports"][0]["status"] == "requested"
+
+    del app.state.query_service
+
+
+def test_query_records_and_exports_return_404_for_unknown_query(tmp_path) -> None:
+    db_path = tmp_path / "query_records_exports_not_found.db"
+    service, _, _ = build_test_service(f"sqlite:///{db_path}")
+    app.state.query_service = service
+
+    with TestClient(app) as client:
+        records_response = client.get("/facebook/queries/missing-query/records")
+        exports_response = client.get("/facebook/queries/missing-query/exports")
+        create_export_response = client.post(
+            "/facebook/queries/missing-query/export",
+            json={"export_format": "xlsx"},
+        )
+
+    assert records_response.status_code == 404
+    assert exports_response.status_code == 404
+    assert create_export_response.status_code == 404
 
     del app.state.query_service

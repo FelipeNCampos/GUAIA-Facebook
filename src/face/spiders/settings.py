@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import platform
 
+from face.browser import authenticated_context_kwargs, playwright_launch_options
 from face.config import get_settings
 
 settings = get_settings()
@@ -11,20 +12,16 @@ SPIDER_MODULES = ["face.spiders"]
 NEWSPIDER_MODULE = "face.spiders"
 
 DOWNLOAD_HANDLERS = {
-    "http": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
-    "https": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
+    "http": "face.playwright_handler.AuthenticatedScrapyPlaywrightDownloadHandler",
+    "https": "face.playwright_handler.AuthenticatedScrapyPlaywrightDownloadHandler",
 }
 
 PLAYWRIGHT_BROWSER_TYPE = "chromium"
-PLAYWRIGHT_LAUNCH_OPTIONS = {
-    "headless": settings.playwright_headless,
-    "args": [
-        "--no-sandbox",
-        "--disable-blink-features=AutomationControlled",
-        "--disable-dev-shm-usage",
-    ],
-}
+PLAYWRIGHT_LAUNCH_OPTIONS = playwright_launch_options(settings)
 PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT = 30000
+PLAYWRIGHT_CONTEXTS = {
+    "authenticated": authenticated_context_kwargs(settings),
+}
 
 TWISTED_REACTOR = "twisted.internet.asyncioreactor.AsyncioSelectorReactor"
 if platform.system() != "Windows":

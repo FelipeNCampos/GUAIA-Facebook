@@ -21,7 +21,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    command: uvicorn face.api:app --host 0.0.0.0 --port 8000
+    command: uvicorn face.api:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/src
     environment:
       APP_ENV: ${APP_ENV:-development}
       APP_LOG_LEVEL: ${APP_LOG_LEVEL:-INFO}
@@ -30,6 +30,21 @@ services:
       RABBITMQ_URL: ${RABBITMQ_URL:?RABBITMQ_URL must be set in .env}
     ports:
       - "8000:8000"
+    develop:
+      watch:
+        - action: sync
+          path: ./src
+          target: /app/src
+        - action: sync
+          path: ./migrations
+          target: /app/migrations
+        - action: sync
+          path: ./alembic.ini
+          target: /app/alembic.ini
+        - action: rebuild
+          path: ./pyproject.toml
+        - action: rebuild
+          path: ./Dockerfile
     depends_on:
       face-migrate:
         condition: service_completed_successfully
@@ -49,6 +64,21 @@ services:
       APP_LOG_JSON: ${APP_LOG_JSON:-true}
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set in .env}
       RABBITMQ_URL: ${RABBITMQ_URL:?RABBITMQ_URL must be set in .env}
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./src
+          target: /app/src
+        - action: sync+restart
+          path: ./migrations
+          target: /app/migrations
+        - action: sync+restart
+          path: ./alembic.ini
+          target: /app/alembic.ini
+        - action: rebuild
+          path: ./pyproject.toml
+        - action: rebuild
+          path: ./Dockerfile
     depends_on:
       face-migrate:
         condition: service_completed_successfully
@@ -71,6 +101,21 @@ services:
       PLAYWRIGHT_BROWSERS_PATH: ${PLAYWRIGHT_BROWSERS_PATH:-/ms-playwright}
     volumes:
       - playwright-browsers:/ms-playwright
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./src
+          target: /app/src
+        - action: sync+restart
+          path: ./migrations
+          target: /app/migrations
+        - action: sync+restart
+          path: ./alembic.ini
+          target: /app/alembic.ini
+        - action: rebuild
+          path: ./pyproject.toml
+        - action: rebuild
+          path: ./Dockerfile
     depends_on:
       face-migrate:
         condition: service_completed_successfully

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -56,3 +56,48 @@ class QueryStatusResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     recent_events: list[JobEventResponse]
+
+
+class QueryRecordResponse(BaseModel):
+    id: int
+    id_query: str
+    url: str
+    url_normalized: str | None
+    category: str | None
+    status: str
+    payload: dict[str, Any] | None
+    last_error: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class QueryRecordsResponse(BaseModel):
+    id_query: str
+    records: list[QueryRecordResponse]
+
+
+class QueryExportResponse(BaseModel):
+    id: int
+    id_query: str
+    export_format: str
+    storage_path: str | None
+    status: str
+    created_at: datetime
+    completed_at: datetime | None
+
+
+class QueryExportsResponse(BaseModel):
+    id_query: str
+    exports: list[QueryExportResponse]
+
+
+class CreateExportRequest(BaseModel):
+    export_format: Literal["json", "xlsx"]
+
+
+class ExportAcceptedResponse(BaseModel):
+    export_id: int
+    id_query: str
+    export_format: str
+    status: str
+    created_at: datetime

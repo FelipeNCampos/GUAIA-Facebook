@@ -11,7 +11,7 @@ import time
 from common.logging import configure_logging, get_logger
 
 from face.config import get_settings
-from face.queues import Consumer, QueueNames, RabbitMQConsumer
+from face.queues import Consumer, QueueNames, RabbitMQConsumer, RabbitMQInfrastructure
 from face.spiders.runner import run_google_search_spider
 
 logger = get_logger(__name__)
@@ -30,6 +30,7 @@ async def run_search_worker_loop(
 ) -> None:
     resolved_consumer = consumer or RabbitMQConsumer()
     queue_name = QueueNames().search_request
+    idle_sleep_seconds = max(poll_interval_seconds, 0.1)
 
     while running:
         message = await resolved_consumer.get_json_message(
@@ -38,6 +39,7 @@ async def run_search_worker_loop(
         )
         if message is None:
             logger.info("worker runtime heartbeat", extra={"service": "face-search-spider"})
+            await asyncio.sleep(idle_sleep_seconds)
             continue
 
         id_query = str(message.payload.get("id_query", "unknown"))
@@ -82,6 +84,7 @@ def main() -> None:
         )
         return
     if role == "search":
+        asyncio.run(RabbitMQInfrastructure().ensure_minimum_queues())
         logger.info("worker runtime started", extra={"service": "face-search-spider"})
         asyncio.run(run_search_worker_loop())
         logger.info("worker runtime stopped", extra={"service": "face-search-spider"})

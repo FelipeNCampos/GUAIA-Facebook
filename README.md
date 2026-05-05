@@ -29,6 +29,15 @@ Esta entrega prepara a fundacao da solucao com:
    Para Compose, `DATABASE_URL` deve apontar para `@postgres:5432` e `RABBITMQ_URL` para `@rabbitmq:5672`.
 2. Execute `docker compose up --build`.
 
+## Desenvolvimento com watch
+
+1. Suba o ambiente base com `docker compose up --build`.
+2. Em outro terminal, rode `docker compose watch`.
+3. Alteracoes em `src/`, `migrations/` e `alembic.ini` sao sincronizadas automaticamente.
+4. O `face-api` usa `uvicorn --reload`, entao recarrega sem rebuild.
+5. Os spiders `face-search-spider` e `face-enrich-spider` reiniciam automaticamente quando o codigo sincronizado muda.
+6. Alteracoes em `pyproject.toml` ou `Dockerfile` disparam rebuild dos servicos acompanhados.
+
 ## Banco de dados
 
 - Execute migrations com `alembic upgrade head`.

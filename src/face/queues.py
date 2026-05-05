@@ -26,6 +26,19 @@ class QueueNames:
     job_events: str = "face.job.events"
     dead_letter: str = "face.dead_letter"
 
+    def all(self) -> tuple[str, ...]:
+        return (
+            self.search_request,
+            self.search_cache_lookup,
+            self.url_discovered,
+            self.enrich_request,
+            self.enrich_cache_lookup,
+            self.record_persisted,
+            self.export_request,
+            self.job_events,
+            self.dead_letter,
+        )
+
 
 class RabbitMQConnection:
     def __init__(self, settings: Settings | None = None) -> None:
@@ -34,7 +47,7 @@ class RabbitMQConnection:
     async def connect(self) -> aio_pika.RobustConnection:
         if not self.settings.rabbitmq_url:
             raise ValueError("RABBITMQ_URL must be configured via environment variable")
-        logger.info("Connecting to RabbitMQ")
+        logger.debug("Connecting to RabbitMQ")
         return await aio_pika.connect_robust(self.settings.rabbitmq_url)
 
 
@@ -88,6 +101,26 @@ class RabbitMQPublisher:
             await connection.close()
 
 
+class RabbitMQInfrastructure:
+    def __init__(
+        self,
+        connection: RabbitMQConnection | None = None,
+        queue_names: QueueNames | None = None,
+    ) -> None:
+        self.connection = connection or RabbitMQConnection()
+        self.queue_names = queue_names or QueueNames()
+
+    async def ensure_minimum_queues(self) -> None:
+        connection = await self.connection.connect()
+        channel = await connection.channel()
+        try:
+            for queue_name in self.queue_names.all():
+                await channel.declare_queue(queue_name, durable=True)
+        finally:
+            await channel.close()
+            await connection.close()
+
+
 class RabbitMQConsumer:
     def __init__(self, connection: RabbitMQConnection | None = None) -> None:
         self.connection = connection or RabbitMQConnection()
@@ -104,22 +137,32 @@ class RabbitMQConsumer:
         try:
             message = await queue.get(timeout=timeout_seconds, fail=False)
             if message is None:
+                await self._close_channel_and_connection(channel, connection)
                 return None
 
             payload = json.loads(message.body.decode("utf-8"))
 
             async def ack() -> None:
-                await message.ack()
-                await channel.close()
-                await connection.close()
+                try:
+                    await message.ack()
+                finally:
+                    await self._close_channel_and_connection(channel, connection)
 
             async def reject(requeue: bool) -> None:
-                await message.reject(requeue=requeue)
-                await channel.close()
-                await connection.close()
+                try:
+                    await message.reject(requeue=requeue)
+                finally:
+                    await self._close_channel_and_connection(channel, connection)
 
             return ConsumedMessage(payload=payload, ack=ack, reject=reject)
         except Exception:
-            await channel.close()
-            await connection.close()
+            await self._close_channel_and_connection(channel, connection)
             raise
+
+    @staticmethod
+    async def _close_channel_and_connection(
+        channel: aio_pika.abc.AbstractChannel,
+        connection: aio_pika.abc.AbstractConnection,
+    ) -> None:
+        await channel.close()
+        await connection.close()

@@ -7,12 +7,16 @@ from fastapi import FastAPI, HTTPException, status
 
 from face.config import get_settings
 from face.models import (
+    CreateExportRequest,
     CreateQueriesRequest,
     CreateQueriesResponse,
+    ExportAcceptedResponse,
     HealthResponse,
+    QueryExportsResponse,
+    QueryRecordsResponse,
     QueryStatusResponse,
 )
-from face.queues import QueueNames, RabbitMQPublisher
+from face.queues import QueueNames, RabbitMQInfrastructure, RabbitMQPublisher
 from face.repository import FaceJobRepository, QueryNotFoundError, create_session_factory
 from face.services import QueryConflictError, QueryService
 
@@ -23,6 +27,8 @@ logger = get_logger(__name__)
 async def lifespan(_: FastAPI):
     settings = get_settings()
     configure_logging(level=settings.app_log_level, json_logs=settings.app_log_json)
+    if settings.app_env != "test":
+        await RabbitMQInfrastructure().ensure_minimum_queues()
     logger.info("face-api starting", extra={"service": "face-api"})
     yield
     logger.info("face-api stopping", extra={"service": "face-api"})
@@ -90,6 +96,59 @@ async def get_query_status(id_query: str) -> QueryStatusResponse:
     except QueryNotFoundError as exc:
         clear_log_context()
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    finally:
+        clear_log_context()
+
+
+@app.get("/facebook/queries/{id_query}/records", response_model=QueryRecordsResponse)
+async def get_query_records(id_query: str) -> QueryRecordsResponse:
+    service = get_query_service()
+    try:
+        return service.get_query_records(id_query)
+    except QueryNotFoundError as exc:
+        clear_log_context()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    finally:
+        clear_log_context()
+
+
+@app.get("/facebook/queries/{id_query}/exports", response_model=QueryExportsResponse)
+async def get_query_exports(id_query: str) -> QueryExportsResponse:
+    service = get_query_service()
+    try:
+        return service.get_query_exports(id_query)
+    except QueryNotFoundError as exc:
+        clear_log_context()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    finally:
+        clear_log_context()
+
+
+@app.post(
+    "/facebook/queries/{id_query}/export",
+    response_model=ExportAcceptedResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def create_export_request(
+    id_query: str,
+    payload: CreateExportRequest,
+) -> ExportAcceptedResponse:
+    service = get_query_service()
+    try:
+        return await service.create_export_request(id_query, payload)
+    except QueryNotFoundError as exc:
+        clear_log_context()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except Exception as exc:
+        clear_log_context()
+        logger.exception(
+            "Failed to create and publish export request",
+            extra={"service": "face-api", "id_query": id_query},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create export request",
+        ) from exc
     finally:
         clear_log_context()
 
