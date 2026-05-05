@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import platform
-
 from face.browser import authenticated_context_kwargs, playwright_launch_options
 from face.config import get_settings
+from face.scrapy_runtime import resolve_asyncio_event_loop_path
 
 settings = get_settings()
 
@@ -24,8 +23,9 @@ PLAYWRIGHT_CONTEXTS = {
 }
 
 TWISTED_REACTOR = "twisted.internet.asyncioreactor.AsyncioSelectorReactor"
-if platform.system() != "Windows":
-    ASYNCIO_EVENT_LOOP = "uvloop"
+_asyncio_event_loop = resolve_asyncio_event_loop_path()
+if _asyncio_event_loop is not None:
+    ASYNCIO_EVENT_LOOP = _asyncio_event_loop
 
 CONCURRENT_REQUESTS = settings.scrapy_concurrent_requests
 CONCURRENT_REQUESTS_PER_DOMAIN = settings.scrapy_concurrent_requests_per_domain

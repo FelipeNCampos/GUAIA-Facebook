@@ -45,6 +45,9 @@ where = ["src"]
 testpaths = ["tests"]
 addopts = "-q"
 asyncio_default_fixture_loop_scope = "function"
+markers = [
+  "integration: tests that require dedicated PostgreSQL and RabbitMQ services",
+]
 
 [tool.ruff]
 line-length = 100

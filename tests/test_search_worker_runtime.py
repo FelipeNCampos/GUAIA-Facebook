@@ -5,7 +5,7 @@ import json
 import subprocess
 
 from face.queues import ConsumedMessage
-from face.worker_runtime import run_search_worker_loop
+from face.worker_runtime import run_enrich_worker_loop, run_search_worker_loop
 
 
 class FakeConsumer:
@@ -108,3 +108,45 @@ def test_search_worker_loop_rejects_message_on_failure(monkeypatch) -> None:
 
     assert acked["value"] is False
     assert rejected["value"] is True
+
+
+def test_enrich_worker_loop_dispatches_message_and_acks(monkeypatch) -> None:
+    acked = {"value": False}
+    rejected = {"value": False}
+
+    async def ack() -> None:
+        acked["value"] = True
+
+    async def reject(requeue: bool) -> None:
+        rejected["value"] = requeue
+
+    message = ConsumedMessage(
+        payload={
+            "id_query": "job-3",
+            "facebook_url": "https://www.facebook.com/foo/posts/123",
+            "category": "post",
+        },
+        ack=ack,
+        reject=reject,
+    )
+    consumer = FakeConsumer([message, None])
+
+    def fake_run(args, check, env):  # type: ignore[no-untyped-def]
+        assert args[-1] == "enrich"
+        payload = json.loads(env["FACE_ENRICH_JOB_JSON"])
+        assert payload["id_query"] == "job-3"
+        assert payload["facebook_url"] == "https://www.facebook.com/foo/posts/123"
+        import face.worker_runtime as worker_runtime
+
+        worker_runtime.running = False
+        return subprocess.CompletedProcess(args=args, returncode=0)
+
+    monkeypatch.setattr("face.worker_runtime.subprocess.run", fake_run)
+
+    import face.worker_runtime as worker_runtime
+
+    worker_runtime.running = True
+    asyncio.run(run_enrich_worker_loop(consumer, poll_interval_seconds=0))
+
+    assert acked["value"] is True
+    assert rejected["value"] is False

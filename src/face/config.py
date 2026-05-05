@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import platform
 from functools import lru_cache
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from face.scrapy_runtime import resolve_asyncio_event_loop_path
 
 
 class Settings(BaseSettings):
@@ -60,8 +61,9 @@ class Settings(BaseSettings):
             "CLOSESPIDER_ERRORCOUNT": self.scrapy_closespider_errorcount,
             "TWISTED_REACTOR": "twisted.internet.asyncioreactor.AsyncioSelectorReactor",
         }
-        if platform.system() != "Windows":
-            settings["ASYNCIO_EVENT_LOOP"] = "uvloop"
+        asyncio_event_loop = resolve_asyncio_event_loop_path()
+        if asyncio_event_loop is not None:
+            settings["ASYNCIO_EVENT_LOOP"] = asyncio_event_loop
         return settings
 
 

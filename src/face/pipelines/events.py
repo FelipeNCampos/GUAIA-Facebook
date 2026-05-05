@@ -28,7 +28,11 @@ class EventsPipeline:
         self.publisher = getattr(spider, "publisher", None) or RabbitMQPublisher()
         self.discovered_count = 0
 
-        if getattr(spider, "id_query", None) and self.job_repository is not None:
+        if (
+            getattr(spider, "name", None) == "google_search"
+            and getattr(spider, "id_query", None)
+            and self.job_repository is not None
+        ):
             self.job_repository.update_job_status(
                 id_query=spider.id_query,
                 status_current="search_in_progress",
@@ -51,15 +55,19 @@ class EventsPipeline:
         self.discovered_count += 1
         payload = {
             "id_query": item["id_query"],
-            "url": item["url"],
-            "url_normalized": item["url_normalized"],
+            "facebook_url": item["url_normalized"],
             "category": item["category"],
+            "query_source": item.get("query_source", "api"),
             "record_id": item.get("record_id"),
         }
         self.job_repository.add_event(
             id_query=item["id_query"],
             event_type="search.url_discovered",
-            payload=payload,
+            payload={
+                **payload,
+                "url": item["url"],
+                "url_normalized": item["url_normalized"],
+            },
         )
         spider.crawler.stats.inc_value("face/search_url_discovered_count", 1)
         spider.crawler.stats.set_value("face/search_discovered_total", self.discovered_count)
@@ -67,30 +75,52 @@ class EventsPipeline:
         return item
 
     def close_spider(self, spider):  # type: ignore[no-untyped-def]
-        if getattr(spider, "id_query", None) and self.job_repository is not None:
-            status = "search_completed" if self.discovered_count > 0 else "search_completed_empty"
+        if (
+            getattr(spider, "name", None) == "google_search"
+            and getattr(spider, "id_query", None)
+            and self.job_repository is not None
+        ):
+            blocked_details = getattr(spider, "search_blocked_details", None)
+            if blocked_details is not None:
+                status = "search_blocked"
+                event_type = "search.blocked"
+                event_payload = {
+                    **blocked_details,
+                    "discovered_count": self.discovered_count,
+                    "pages_visited": getattr(spider, "page_count", 0),
+                }
+            else:
+                status = "search_completed" if self.discovered_count > 0 else "search_completed_empty"
+                event_type = "search.completed"
+                event_payload = {
+                    "discovered_count": self.discovered_count,
+                    "pages_visited": getattr(spider, "page_count", 0),
+                }
             self.job_repository.update_job_status(
                 id_query=spider.id_query,
                 status_current=status,
             )
             self.job_repository.add_event(
                 id_query=spider.id_query,
-                event_type="search.completed",
-                payload={
-                    "discovered_count": self.discovered_count,
-                    "pages_visited": getattr(spider, "page_count", 0),
-                },
+                event_type=event_type,
+                payload=event_payload,
             )
-            logger.info(
-                "Search spider completed",
-                extra={"service": "face-search-spider", "id_query": spider.id_query},
-            )
+            if blocked_details is not None:
+                logger.warning(
+                    "Search spider blocked by Google",
+                    extra={"service": "face-search-spider", "id_query": spider.id_query},
+                )
+            else:
+                logger.info(
+                    "Search spider completed",
+                    extra={"service": "face-search-spider", "id_query": spider.id_query},
+                )
 
     def _publish_discovered_url(self, payload: dict[str, object]) -> None:
         if self.publisher is None:
             raise RuntimeError("Publisher not initialized")
 
-        coroutine = self.publisher.publish_json(self.queue_names.url_discovered, payload)
+        coroutine = self.publisher.publish_json(self.queue_names.enrich_request, payload)
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
