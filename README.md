@@ -2,16 +2,13 @@
 
 Base tecnica inicial do modulo Facebook do InfoPolitica, alinhada com a especificacao em `docs/facebook_rebuild.md`.
 
-## Sprint 1
+## Status Atual
 
-Esta entrega prepara a fundacao da solucao com:
+O repositorio ja cobre a base das Sprints 1 a 3 do planejamento:
 
-- estrutura de codigo aderente a arquitetura alvo
-- configuracao centralizada por variaveis de ambiente
-- logging estruturado em JSON
-- Docker e Docker Compose para ambiente local
-- Alembic com migration inicial
-- pipeline CI com lint e testes basicos
+- fundacao tecnica, configuracao centralizada e observabilidade basica
+- API de consultas com persistencia inicial e publicacao em fila
+- fluxo de busca Google com Scrapy, persistencia de URLs descobertas e encaminhamento para enriquecimento
 
 ## Como executar localmente
 
@@ -37,6 +34,19 @@ Esta entrega prepara a fundacao da solucao com:
 4. O `face-api` usa `uvicorn --reload`, entao recarrega sem rebuild.
 5. Os spiders `face-search-spider` e `face-enrich-spider` reiniciam automaticamente quando o codigo sincronizado muda.
 6. Alteracoes em `pyproject.toml` ou `Dockerfile` disparam rebuild dos servicos acompanhados.
+
+## Ajustes do Google Search
+
+- `GOOGLE_SEARCH_PROVIDER=auto` usa a API oficial quando `GOOGLE_SEARCH_API_KEY` e `GOOGLE_SEARCH_ENGINE_ID` existem; sem credenciais, usa HTML como fallback.
+- `GOOGLE_SEARCH_PROVIDER=api` força o uso da Custom Search JSON API para clientes existentes do Google Programmable Search.
+- `GOOGLE_SEARCH_PROVIDER=html` força a busca HTML, usando limites conservadores para reduzir bloqueios.
+- `GOOGLE_SEARCH_BROWSER_FALLBACK_ENABLED` e `GOOGLE_SEARCH_BROWSER_FALLBACK_LIMIT` ativam uma tentativa com Playwright quando o Google responder com desafio dependente de JS, como `enablejs_challenge`.
+- `GOOGLE_SEARCH_LANGUAGE`, `GOOGLE_SEARCH_REGION` e `GOOGLE_SEARCH_RESULTS_PER_PAGE` controlam o fingerprint basico da busca.
+- `GOOGLE_SEARCH_CONSENT_COOKIE` ajuda a reduzir intersticiais de consentimento do Google.
+- `GOOGLE_SEARCH_BLOCK_RETRY_LIMIT` define quantas novas tentativas a spider faz ao detectar pagina de desafio.
+- `GOOGLE_SEARCH_DOWNLOAD_DELAY`, `GOOGLE_SEARCH_CONCURRENT_REQUESTS_PER_DOMAIN`, `GOOGLE_SEARCH_AUTOTHROTTLE_TARGET_CONCURRENCY`, `GOOGLE_SEARCH_AUTOTHROTTLE_START_DELAY` e `GOOGLE_SEARCH_AUTOTHROTTLE_MAX_DELAY` deixam o search mais conservador sem afetar o enrich.
+
+- `GOOGLE_SEARCH_FALLBACK_PROVIDER=bing` troca para Bing quando o Google retornar `google_sorry` ou outro desafio sem recuperacao.
 
 ## Banco de dados
 

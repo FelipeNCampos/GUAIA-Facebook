@@ -108,16 +108,20 @@ Colocar em producao o primeiro fluxo de coleta efetiva usando Scrapy em HTTP pur
 
 - Implementar `GoogleSearchSpider`.
 - Implementar normalizacao e classificacao de URLs encontradas.
+- Implementar uso preferencial da Custom Search JSON API quando configurada, mantendo HTML como fallback controlado.
 - Implementar pipeline de persistencia em `face_records`.
 - Implementar pipeline de eventos para progresso da busca.
 - Implementar paginacao, limites de busca e configuracoes de concorrencia.
 - Integrar descoberta com publicacao de URLs candidatas para enriquecimento.
+- Definir e implementar o endpoint base de retry por etapa da query, cobrindo ao menos a etapa `search` nesta sprint.
 
 **Entregaveis**
 
 - Spider de busca funcional via Scrapy.
+- Busca por API oficial quando `GOOGLE_SEARCH_API_KEY` e `GOOGLE_SEARCH_ENGINE_ID` estiverem configurados.
 - Persistencia das URLs descobertas.
 - Eventos de progresso da fase de busca.
+- Endpoint de retry da etapa de busca funcional e integrado com reenfileiramento em `face.search.request`.
 - Testes unitarios para classificacao e normalizacao.
 - Testes de integracao da spider com banco e fila.
 
@@ -126,6 +130,7 @@ Colocar em producao o primeiro fluxo de coleta efetiva usando Scrapy em HTTP pur
 - Uma consulta dispara o spider de busca e retorna URLs classificadas.
 - As URLs ficam registradas com referencia ao `id_query`.
 - O sistema consegue encaminhar URLs descobertas para a etapa seguinte.
+- Uma query com falha, bloqueio ou necessidade de reprocessamento na etapa de busca pode ser reenfileirada via API sem recriacao da consulta.
 
 ---
 

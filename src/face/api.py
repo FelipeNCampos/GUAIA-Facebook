@@ -15,10 +15,12 @@ from face.models import (
     QueryExportsResponse,
     QueryRecordsResponse,
     QueryStatusResponse,
+    RetryAcceptedResponse,
+    RetryQueryStageRequest,
 )
 from face.queues import QueueNames, RabbitMQInfrastructure, RabbitMQPublisher
 from face.repository import FaceJobRepository, QueryNotFoundError, create_session_factory
-from face.services import QueryConflictError, QueryService
+from face.services import QueryConflictError, QueryRetryError, QueryService
 
 logger = get_logger(__name__)
 
@@ -148,6 +150,38 @@ async def create_export_request(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to create export request",
+        ) from exc
+    finally:
+        clear_log_context()
+
+
+@app.post(
+    "/facebook/queries/{id_query}/retry",
+    response_model=RetryAcceptedResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def retry_query_stage(
+    id_query: str,
+    payload: RetryQueryStageRequest,
+) -> RetryAcceptedResponse:
+    service = get_query_service()
+    try:
+        return await service.retry_query_stage(id_query, payload)
+    except QueryNotFoundError as exc:
+        clear_log_context()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except QueryRetryError as exc:
+        clear_log_context()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except Exception as exc:
+        clear_log_context()
+        logger.exception(
+            "Failed to create and publish retry request",
+            extra={"service": "face-api", "id_query": id_query},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retry query stage",
         ) from exc
     finally:
         clear_log_context()

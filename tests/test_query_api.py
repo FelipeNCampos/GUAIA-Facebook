@@ -364,3 +364,247 @@ def test_query_records_and_exports_return_404_for_unknown_query(tmp_path) -> Non
     assert create_export_response.status_code == 404
 
     del app.state.query_service
+
+
+def test_retry_search_stage_reenqueues_existing_query(tmp_path) -> None:
+    db_path = tmp_path / "query_retry_search.db"
+    service, publisher, session_factory = build_test_service(f"sqlite:///{db_path}")
+    app.state.query_service = service
+
+    with TestClient(app) as client:
+        create_response = client.post(
+            "/facebook/queries",
+            json={
+                "queries": [
+                    {
+                        "id_query": "query-retry-search-1",
+                        "subject": "tema",
+                        "query_source": "api",
+                        "start_date": "2026-05-01",
+                        "end_date": "2026-05-05",
+                    }
+                ]
+            },
+        )
+        retry_response = client.post(
+            "/facebook/queries/query-retry-search-1/retry",
+            json={"stage": "search"},
+        )
+
+    assert create_response.status_code == 202
+    assert retry_response.status_code == 202
+    body = retry_response.json()
+    assert body["id_query"] == "query-retry-search-1"
+    assert body["stage"] == "search"
+    assert body["status_current"] == "search_requested"
+
+    with session_factory() as session:
+        job = session.query(FaceJob).filter(FaceJob.id_query == "query-retry-search-1").one()
+        events = (
+            session.query(FaceJobEvent)
+            .filter(FaceJobEvent.id_query == "query-retry-search-1")
+            .order_by(FaceJobEvent.id.asc())
+            .all()
+        )
+
+    assert job.status_current == "search_requested"
+    assert [event.event_type for event in events][-1] == "search.retry_requested"
+    assert publisher.messages[2][0] == "face.search.request"
+    assert publisher.messages[2][1]["id_query"] == "query-retry-search-1"
+    assert publisher.messages[3][0] == "face.job.events"
+    assert publisher.messages[3][1]["event_type"] == "search.retry_requested"
+
+    del app.state.query_service
+
+
+def test_retry_enrich_stage_reenqueues_selected_records(tmp_path) -> None:
+    db_path = tmp_path / "query_retry_enrich.db"
+    service, publisher, session_factory = build_test_service(f"sqlite:///{db_path}")
+    app.state.query_service = service
+
+    with TestClient(app) as client:
+        create_response = client.post(
+            "/facebook/queries",
+            json={
+                "queries": [
+                    {
+                        "id_query": "query-retry-enrich-1",
+                        "subject": "tema",
+                        "query_source": "api",
+                    }
+                ]
+            },
+        )
+
+    assert create_response.status_code == 202
+
+    with session_factory() as session:
+        session.add_all(
+            [
+                FaceRecord(
+                    id_query="query-retry-enrich-1",
+                    url="https://www.facebook.com/foo/posts/1",
+                    url_normalized="https://www.facebook.com/foo/posts/1",
+                    category="post",
+                    status="discovered",
+                    payload={"search_page": 1},
+                ),
+                FaceRecord(
+                    id_query="query-retry-enrich-1",
+                    url="https://www.facebook.com/foo/videos/2",
+                    url_normalized="https://www.facebook.com/foo/videos/2",
+                    category="video",
+                    status="failed",
+                    payload={"search_page": 1},
+                ),
+            ]
+        )
+        session.commit()
+        records = (
+            session.query(FaceRecord)
+            .filter(FaceRecord.id_query == "query-retry-enrich-1")
+            .order_by(FaceRecord.id.asc())
+            .all()
+        )
+        retry_record_id = records[1].id
+
+    with TestClient(app) as client:
+        retry_response = client.post(
+            "/facebook/queries/query-retry-enrich-1/retry",
+            json={"stage": "enrich", "record_ids": [retry_record_id]},
+        )
+
+    assert retry_response.status_code == 202
+    body = retry_response.json()
+    assert body["stage"] == "enrich"
+    assert body["status_current"] == "enrich_requested"
+    assert body["retried_records"] == 1
+
+    with session_factory() as session:
+        job = session.query(FaceJob).filter(FaceJob.id_query == "query-retry-enrich-1").one()
+        events = (
+            session.query(FaceJobEvent)
+            .filter(FaceJobEvent.id_query == "query-retry-enrich-1")
+            .order_by(FaceJobEvent.id.asc())
+            .all()
+        )
+
+    assert job.status_current == "enrich_requested"
+    assert [event.event_type for event in events][-1] == "enrich.retry_requested"
+    assert publisher.messages[2][0] == "face.enrich.request"
+    assert publisher.messages[2][1]["record_id"] == retry_record_id
+    assert publisher.messages[3][0] == "face.job.events"
+    assert publisher.messages[3][1]["event_type"] == "enrich.retry_requested"
+
+    del app.state.query_service
+
+
+def test_retry_export_stage_reuses_latest_format_when_not_explicit(tmp_path) -> None:
+    db_path = tmp_path / "query_retry_export.db"
+    service, publisher, session_factory = build_test_service(f"sqlite:///{db_path}")
+    app.state.query_service = service
+
+    with TestClient(app) as client:
+        create_response = client.post(
+            "/facebook/queries",
+            json={
+                "queries": [
+                    {
+                        "id_query": "query-retry-export-1",
+                        "subject": "tema",
+                        "query_source": "api",
+                    }
+                ]
+            },
+        )
+        export_response = client.post(
+            "/facebook/queries/query-retry-export-1/export",
+            json={"export_format": "xlsx"},
+        )
+
+    assert create_response.status_code == 202
+    assert export_response.status_code == 202
+
+    with TestClient(app) as client:
+        retry_response = client.post(
+            "/facebook/queries/query-retry-export-1/retry",
+            json={"stage": "export"},
+        )
+
+    assert retry_response.status_code == 202
+    body = retry_response.json()
+    assert body["stage"] == "export"
+    assert body["status_current"] == "export_requested"
+    assert body["export_format"] == "xlsx"
+    assert body["export_id"] is not None
+
+    with session_factory() as session:
+        exports = (
+            session.query(FaceExport)
+            .filter(FaceExport.id_query == "query-retry-export-1")
+            .order_by(FaceExport.id.asc())
+            .all()
+        )
+        job = session.query(FaceJob).filter(FaceJob.id_query == "query-retry-export-1").one()
+        events = (
+            session.query(FaceJobEvent)
+            .filter(FaceJobEvent.id_query == "query-retry-export-1")
+            .order_by(FaceJobEvent.id.asc())
+            .all()
+        )
+
+    assert len(exports) == 2
+    assert exports[-1].status == "requested"
+    assert exports[-1].export_format == "xlsx"
+    assert job.status_current == "export_requested"
+    assert [event.event_type for event in events][-1] == "export.retry_requested"
+    assert publisher.messages[4][0] == "face.export.request"
+    assert publisher.messages[5][0] == "face.job.events"
+    assert publisher.messages[5][1]["event_type"] == "export.retry_requested"
+
+    del app.state.query_service
+
+
+def test_retry_endpoint_returns_409_for_invalid_enrich_record_selection(tmp_path) -> None:
+    db_path = tmp_path / "query_retry_invalid_enrich.db"
+    service, _, _ = build_test_service(f"sqlite:///{db_path}")
+    app.state.query_service = service
+
+    with TestClient(app) as client:
+        create_response = client.post(
+            "/facebook/queries",
+            json={
+                "queries": [
+                    {
+                        "id_query": "query-retry-invalid-enrich-1",
+                        "subject": "tema",
+                        "query_source": "api",
+                    }
+                ]
+            },
+        )
+        retry_response = client.post(
+            "/facebook/queries/query-retry-invalid-enrich-1/retry",
+            json={"stage": "enrich", "record_ids": [999]},
+        )
+
+    assert create_response.status_code == 202
+    assert retry_response.status_code == 409
+
+    del app.state.query_service
+
+
+def test_retry_endpoint_returns_404_for_unknown_query(tmp_path) -> None:
+    db_path = tmp_path / "query_retry_not_found.db"
+    service, _, _ = build_test_service(f"sqlite:///{db_path}")
+    app.state.query_service = service
+
+    with TestClient(app) as client:
+        retry_response = client.post(
+            "/facebook/queries/missing-query/retry",
+            json={"stage": "search"},
+        )
+
+    assert retry_response.status_code == 404
+
+    del app.state.query_service

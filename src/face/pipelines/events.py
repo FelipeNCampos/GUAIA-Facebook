@@ -33,6 +33,9 @@ class EventsPipeline:
             and getattr(spider, "id_query", None)
             and self.job_repository is not None
         ):
+            payload = {
+                "subject": getattr(spider, "subject", None),
+            }
             self.job_repository.update_job_status(
                 id_query=spider.id_query,
                 status_current="search_in_progress",
@@ -40,9 +43,14 @@ class EventsPipeline:
             self.job_repository.add_event(
                 id_query=spider.id_query,
                 event_type="search.started",
-                payload={
-                    "subject": getattr(spider, "subject", None),
-                },
+                payload=payload,
+            )
+            self._publish_job_event(
+                {
+                    "id_query": spider.id_query,
+                    "event_type": "search.started",
+                    "payload": payload,
+                }
             )
 
     def process_item(self, item, spider):  # type: ignore[no-untyped-def]
@@ -71,7 +79,19 @@ class EventsPipeline:
         )
         spider.crawler.stats.inc_value("face/search_url_discovered_count", 1)
         spider.crawler.stats.set_value("face/search_discovered_total", self.discovered_count)
-        self._publish_discovered_url(payload)
+        self._publish_json(self.queue_names.url_discovered, payload)
+        self._publish_json(self.queue_names.enrich_request, payload)
+        self._publish_job_event(
+            {
+                "id_query": item["id_query"],
+                "event_type": "search.url_discovered",
+                "payload": {
+                    **payload,
+                    "url": item["url"],
+                    "url_normalized": item["url_normalized"],
+                },
+            }
+        )
         return item
 
     def close_spider(self, spider):  # type: ignore[no-untyped-def]
@@ -109,6 +129,13 @@ class EventsPipeline:
                 event_type=event_type,
                 payload=event_payload,
             )
+            self._publish_job_event(
+                {
+                    "id_query": spider.id_query,
+                    "event_type": event_type,
+                    "payload": event_payload,
+                }
+            )
             if blocked_details is not None:
                 logger.warning(
                     "Search spider blocked by Google",
@@ -120,11 +147,14 @@ class EventsPipeline:
                     extra={"service": "face-search-spider", "id_query": spider.id_query},
                 )
 
-    def _publish_discovered_url(self, payload: dict[str, object]) -> None:
+    def _publish_job_event(self, payload: dict[str, object]) -> None:
+        self._publish_json(self.queue_names.job_events, payload)
+
+    def _publish_json(self, queue_name: str, payload: dict[str, object]) -> None:
         if self.publisher is None:
             raise RuntimeError("Publisher not initialized")
 
-        coroutine = self.publisher.publish_json(self.queue_names.enrich_request, payload)
+        coroutine = self.publisher.publish_json(queue_name, payload)
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:

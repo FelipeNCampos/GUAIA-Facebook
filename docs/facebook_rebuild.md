@@ -107,8 +107,11 @@ A API REST deve expor, no mínimo, os seguintes endpoints (inalterados em relaç
 - `GET /facebook/queries/{id_query}/records` – leitura de registros descobertos e enriquecidos.
 - `GET /facebook/queries/{id_query}/exports` – listagem de artefatos exportados.
 - `POST /facebook/queries/{id_query}/export` – solicitação de exportação JSON/XLSX.
+- `POST /facebook/queries/{id_query}/retry` – solicitação de retry de uma etapa específica da query, com reenfileiramento controlado do processamento.
 
 Códigos de resposta HTTP seguem o padrão da v1 (202, 200, 404, 409, 422, 500).
+
+O endpoint de retry deve permitir, no mínimo, reexecutar etapas individuais como `search`, `enrich` e `export`, sem exigir a recriação da consulta original. O payload deve identificar a etapa a ser reprocessada e o backend deve registrar evento de auditoria, atualizar o status da query e publicar a mensagem correspondente na fila adequada.
 
 ### 3.2 Interface de Filas (RabbitMQ)
 
@@ -219,6 +222,8 @@ Sem alteração funcional. A API (`face-api`) continua responsável por validaç
 ### 4.2 Busca Google e Descoberta de URLs (FR-06 a FR-10)
 
 **Alteração de implementação:** O `face-search-worker` torna-se um **Scrapy Spider** que usa HTTP puro (sem browser) para busca no Google. Isso é mais rápido e menos sujeito a detecção do que a abordagem anterior com Selenium.
+
+Quando houver credenciais configuradas, o sistema deve preferir a **Google Programmable Search / Custom Search JSON API** para descoberta de URLs, reduzindo a dependência de scraping HTML da SERP. O modo HTML permanece como fallback operacional e deve operar com concorrência baixa, `AutoThrottle`, delay aleatório, detecção de páginas de bloqueio e interrupção controlada ao identificar captcha, consent interstitial ou respostas `429/403/503`.
 
 ```python
 class GoogleSearchSpider(scrapy.Spider):

@@ -101,3 +101,29 @@ class ExportAcceptedResponse(BaseModel):
     export_format: str
     status: str
     created_at: datetime
+
+
+class RetryQueryStageRequest(BaseModel):
+    stage: Literal["search", "enrich", "export"]
+    record_ids: list[int] | None = Field(default=None, min_length=1)
+    export_id: int | None = Field(default=None, gt=0)
+    export_format: Literal["json", "xlsx"] | None = None
+
+    @model_validator(mode="after")
+    def validate_stage_specific_fields(self) -> RetryQueryStageRequest:
+        if self.stage != "enrich" and self.record_ids is not None:
+            raise ValueError("record_ids is only supported for the enrich stage")
+        if self.stage != "export" and self.export_id is not None:
+            raise ValueError("export_id is only supported for the export stage")
+        if self.stage != "export" and self.export_format is not None:
+            raise ValueError("export_format is only supported for the export stage")
+        return self
+
+
+class RetryAcceptedResponse(BaseModel):
+    id_query: str
+    stage: Literal["search", "enrich", "export"]
+    status_current: str
+    retried_records: int | None = None
+    export_id: int | None = None
+    export_format: str | None = None

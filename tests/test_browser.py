@@ -9,7 +9,9 @@ from face.browser import (
     AUTHENTICATED_CONTEXT_NAME,
     authenticated_context_kwargs,
     create_authenticated_context,
+    playwright_launch_options,
 )
+from face.config import Settings
 from face.spiders import settings as spider_settings
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -102,6 +104,26 @@ def test_create_authenticated_context_loads_active_unexpired_cookies(tmp_path, m
 
 def test_authenticated_context_name_constant() -> None:
     assert AUTHENTICATED_CONTEXT_NAME == "authenticated"
+
+
+def test_playwright_launch_options_force_headless_without_display(monkeypatch) -> None:
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.setattr("face.browser.os.name", "posix")
+
+    launch_options = playwright_launch_options(Settings(PLAYWRIGHT_HEADLESS=False))
+
+    assert launch_options["headless"] is True
+
+
+def test_playwright_launch_options_keep_headed_on_windows_without_display(monkeypatch) -> None:
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.setattr("face.browser.os.name", "nt")
+
+    launch_options = playwright_launch_options(Settings(PLAYWRIGHT_HEADLESS=False))
+
+    assert launch_options["headless"] is False
 
 
 def test_spider_settings_define_authenticated_playwright_context() -> None:

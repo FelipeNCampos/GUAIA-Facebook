@@ -29,6 +29,53 @@ class Settings(BaseSettings):
         default="./session_data", alias="PLAYWRIGHT_USER_DATA_DIR"
     )
 
+    google_search_language: str = Field(default="pt-BR", alias="GOOGLE_SEARCH_LANGUAGE")
+    google_search_region: str = Field(default="br", alias="GOOGLE_SEARCH_REGION")
+    google_search_provider: str = Field(default="auto", alias="GOOGLE_SEARCH_PROVIDER")
+    google_search_api_key: str = Field(default="", alias="GOOGLE_SEARCH_API_KEY")
+    google_search_engine_id: str = Field(default="", alias="GOOGLE_SEARCH_ENGINE_ID")
+    google_search_fallback_provider: str = Field(
+        default="bing",
+        alias="GOOGLE_SEARCH_FALLBACK_PROVIDER",
+    )
+    google_search_results_per_page: int = Field(
+        default=10, alias="GOOGLE_SEARCH_RESULTS_PER_PAGE"
+    )
+    google_search_consent_cookie: str = Field(
+        default="YES+cb.20210328-17-p0.en+FX+667",
+        alias="GOOGLE_SEARCH_CONSENT_COOKIE",
+    )
+    google_search_block_retry_limit: int = Field(
+        default=2, alias="GOOGLE_SEARCH_BLOCK_RETRY_LIMIT"
+    )
+    google_search_browser_fallback_enabled: bool = Field(
+        default=True,
+        alias="GOOGLE_SEARCH_BROWSER_FALLBACK_ENABLED",
+    )
+    google_search_browser_fallback_limit: int = Field(
+        default=1,
+        alias="GOOGLE_SEARCH_BROWSER_FALLBACK_LIMIT",
+    )
+    google_search_download_delay: float = Field(
+        default=6.0, alias="GOOGLE_SEARCH_DOWNLOAD_DELAY"
+    )
+    google_search_concurrent_requests_per_domain: int = Field(
+        default=1,
+        alias="GOOGLE_SEARCH_CONCURRENT_REQUESTS_PER_DOMAIN",
+    )
+    google_search_autothrottle_target_concurrency: float = Field(
+        default=0.5,
+        alias="GOOGLE_SEARCH_AUTOTHROTTLE_TARGET_CONCURRENCY",
+    )
+    google_search_autothrottle_start_delay: float = Field(
+        default=6.0,
+        alias="GOOGLE_SEARCH_AUTOTHROTTLE_START_DELAY",
+    )
+    google_search_autothrottle_max_delay: float = Field(
+        default=90.0,
+        alias="GOOGLE_SEARCH_AUTOTHROTTLE_MAX_DELAY",
+    )
+
     scrapy_concurrent_requests: int = Field(default=16, alias="SCRAPY_CONCURRENT_REQUESTS")
     scrapy_concurrent_requests_per_domain: int = Field(
         default=4,

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from sqlalchemy.orm import Session, sessionmaker
 
 from face.config import Settings, get_settings
@@ -7,10 +9,18 @@ from face.config import Settings, get_settings
 AUTHENTICATED_CONTEXT_NAME = "authenticated"
 
 
+def _should_force_headless(resolved: Settings) -> bool:
+    if resolved.playwright_headless:
+        return True
+    if os.name == "nt":
+        return False
+    return not (os.getenv("DISPLAY") or os.getenv("WAYLAND_DISPLAY"))
+
+
 def playwright_launch_options(settings: Settings | None = None) -> dict[str, object]:
     resolved = settings or get_settings()
     return {
-        "headless": resolved.playwright_headless,
+        "headless": _should_force_headless(resolved),
         "args": [
             "--no-sandbox",
             "--disable-blink-features=AutomationControlled",

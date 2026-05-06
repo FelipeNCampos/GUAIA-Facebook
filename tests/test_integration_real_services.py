@@ -122,7 +122,16 @@ def test_google_search_spider_persists_to_postgres_and_publishes_to_rabbitmq(
     job_repository.update_job_status(id_query=id_query, status_current="search_requested")
 
     asyncio.run(RabbitMQInfrastructure().ensure_minimum_queues())
-    asyncio.run(purge_queues(integration_rabbitmq_url, (queue_names.enrich_request,)))
+    asyncio.run(
+        purge_queues(
+            integration_rabbitmq_url,
+            (
+                queue_names.url_discovered,
+                queue_names.enrich_request,
+                queue_names.job_events,
+            ),
+        )
+    )
 
     html = """
     <html>
@@ -176,11 +185,24 @@ def test_google_search_spider_persists_to_postgres_and_publishes_to_rabbitmq(
         "search.completed",
     ]
 
+    discovered_message = asyncio.run(consume_payload_and_ack(queue_names.url_discovered))
     consumed = asyncio.run(consume_payload_and_ack(queue_names.enrich_request))
+    started_event = asyncio.run(consume_payload_and_ack(queue_names.job_events))
+    discovered_event = asyncio.run(consume_payload_and_ack(queue_names.job_events))
+    completed_event = asyncio.run(consume_payload_and_ack(queue_names.job_events))
 
+    assert discovered_message is not None
+    assert discovered_message["id_query"] == id_query
+    assert discovered_message["facebook_url"] == "https://www.facebook.com/foo/posts/123"
     assert consumed is not None
     assert consumed["id_query"] == id_query
     assert consumed["facebook_url"] == "https://www.facebook.com/foo/posts/123"
     assert consumed["category"] == "post"
     assert consumed["query_source"] == "api"
     assert consumed["record_id"] == record.id
+    assert started_event is not None
+    assert started_event["event_type"] == "search.started"
+    assert discovered_event is not None
+    assert discovered_event["event_type"] == "search.url_discovered"
+    assert completed_event is not None
+    assert completed_event["event_type"] == "search.completed"
