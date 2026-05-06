@@ -90,7 +90,11 @@ class EventsPipeline:
                     "pages_visited": getattr(spider, "page_count", 0),
                 }
             else:
-                status = "search_completed" if self.discovered_count > 0 else "search_completed_empty"
+                status = (
+                    "search_completed"
+                    if self.discovered_count > 0
+                    else "search_completed_empty"
+                )
                 event_type = "search.completed"
                 event_payload = {
                     "discovered_count": self.discovered_count,

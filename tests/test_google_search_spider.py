@@ -225,7 +225,10 @@ def test_pipelines_mark_empty_search_without_google_block(tmp_path) -> None:
         start_date=None,
         end_date=None,
     )
-    job_repository.update_job_status(id_query="search-job-empty-1", status_current="search_requested")
+    job_repository.update_job_status(
+        id_query="search-job-empty-1",
+        status_current="search_requested",
+    )
 
     spider = GoogleSearchSpider(
         id_query="search-job-empty-1",

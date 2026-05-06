@@ -3,7 +3,6 @@ from __future__ import annotations
 import types
 
 import pytest
-
 from face.scrapy_runtime import resolve_asyncio_event_loop_path
 from face.spiders.runner import run_google_search_spider
 
@@ -40,7 +39,10 @@ def test_run_google_search_spider_raises_when_bootstrap_fails(monkeypatch) -> No
             self.bootstrap_failed = True
 
     monkeypatch.setattr("face.spiders.runner.CrawlerProcess", FakeCrawlerProcess)
-    monkeypatch.setattr("face.spiders.runner.build_spider_settings", lambda: types.SimpleNamespace())
+    monkeypatch.setattr(
+        "face.spiders.runner.build_spider_settings",
+        lambda: types.SimpleNamespace(),
+    )
 
     with pytest.raises(RuntimeError, match="google_search spider bootstrap failed"):
         run_google_search_spider({"id_query": "job-1", "subject": "tema", "query_source": "api"})
