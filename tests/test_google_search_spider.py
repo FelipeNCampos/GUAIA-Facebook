@@ -422,6 +422,42 @@ def test_google_search_spider_detects_google_block_page() -> None:
     assert spider.crawler.stats.values["face/search_blocked"] == 1
 
 
+def test_google_search_spider_treats_empty_google_page_as_soft_block() -> None:
+    spider = GoogleSearchSpider(
+        id_query="query-empty-soft-block-1",
+        subject="tema",
+        query_source="api",
+        max_pages=1,
+        user_agents=["test-agent"],
+        google_search_provider="html",
+        max_block_retries=0,
+    )
+    spider.browser_fallback_enabled = False
+    spider.google_search_fallback_provider = ""
+    spider.crawler = build_crawler_stub()
+    request = next(spider.start_requests())
+    response = make_html_response(
+        request.url,
+        """
+        <html>
+            <head><title>Google Search</title></head>
+            <body>
+                <a href="/preferences">Preferences</a>
+                <a href="/advanced_search">Advanced search</a>
+                <a href="/history">History</a>
+            </body>
+        </html>
+        """,
+        request=request,
+    )
+
+    results = list(spider.parse_search(response))
+
+    assert results == []
+    assert spider.search_blocked_details is not None
+    assert spider.search_blocked_details["marker_types"] == ["empty_results_page"]
+
+
 def test_google_search_spider_switches_to_bing_after_google_block() -> None:
     spider = GoogleSearchSpider(
         id_query="query-fallback-1",

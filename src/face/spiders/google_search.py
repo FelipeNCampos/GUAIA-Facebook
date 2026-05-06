@@ -764,6 +764,14 @@ class GoogleSearchSpider(scrapy.Spider):
         response_url = response.url.lower()
         response_text = response.text.lower()
         title = response.css("title::text").get()
+        has_result_containers = bool(
+            response.css("#search, #rso, div.g, div[data-snc]").get()
+        )
+        has_next_page = bool(response.css("a#pnnext").get())
+        has_candidate_urls = bool(
+            any(normalize_url(raw_url) is not None for raw_url in raw_urls)
+            or extract_facebook_urls_from_text(response.text)
+        )
 
         if response.status in self.handle_httpstatus_list:
             marker_types.append(f"http_status_{response.status}")
@@ -788,6 +796,20 @@ class GoogleSearchSpider(scrapy.Spider):
                 marker_types.append("consent_interstitial")
             if any(raw_url.startswith("https://www.google.com/sorry/") for raw_url in raw_urls):
                 marker_types.append("google_sorry")
+
+        # Some soft-block pages return HTTP 200 without explicit challenge text.
+        # When Google serves a stripped page with just a few utility links and no
+        # result containers, treat it like a challenge so we can retry or fall back.
+        if (
+            not marker_types
+            and
+            response.status == 200
+            and not has_result_containers
+            and not has_next_page
+            and not has_candidate_urls
+            and len(raw_urls) <= 3
+        ):
+            marker_types.append("empty_results_page")
 
         if not marker_types:
             return None

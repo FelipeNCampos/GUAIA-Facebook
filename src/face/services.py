@@ -289,7 +289,10 @@ class QueryService:
             retry_count = 0
             try:
                 for enrich_payload in enrich_payloads:
-                    await self.publisher.publish_json(self.queue_names.enrich_request, enrich_payload)
+                    await self.publisher.publish_json(
+                        self.queue_names.enrich_request,
+                        enrich_payload,
+                    )
                     retry_count += 1
                 await self._publish_job_event(
                     id_query=id_query,
