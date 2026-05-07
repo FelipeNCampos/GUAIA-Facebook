@@ -111,7 +111,9 @@ def test_playwright_launch_options_force_headless_without_display(monkeypatch) -
     monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
     monkeypatch.setattr("face.browser.os.name", "posix")
 
-    launch_options = playwright_launch_options(Settings(PLAYWRIGHT_HEADLESS=False))
+    launch_options = playwright_launch_options(
+        Settings(PLAYWRIGHT_HEADLESS=False, PLAYWRIGHT_HEADLESS_MODE="auto")
+    )
 
     assert launch_options["headless"] is True
 
@@ -121,9 +123,34 @@ def test_playwright_launch_options_keep_headed_on_windows_without_display(monkey
     monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
     monkeypatch.setattr("face.browser.os.name", "nt")
 
-    launch_options = playwright_launch_options(Settings(PLAYWRIGHT_HEADLESS=False))
+    launch_options = playwright_launch_options(
+        Settings(PLAYWRIGHT_HEADLESS=False, PLAYWRIGHT_HEADLESS_MODE="auto")
+    )
 
     assert launch_options["headless"] is False
+
+
+def test_playwright_launch_options_allow_explicit_headed_mode(monkeypatch) -> None:
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.setattr("face.browser.os.name", "posix")
+
+    launch_options = playwright_launch_options(
+        Settings(PLAYWRIGHT_HEADLESS=False, PLAYWRIGHT_HEADLESS_MODE="headed")
+    )
+
+    assert launch_options["headless"] is False
+
+
+def test_playwright_launch_options_allow_explicit_headless_mode(monkeypatch) -> None:
+    monkeypatch.setenv("DISPLAY", ":0")
+    monkeypatch.setattr("face.browser.os.name", "nt")
+
+    launch_options = playwright_launch_options(
+        Settings(PLAYWRIGHT_HEADLESS=False, PLAYWRIGHT_HEADLESS_MODE="headless")
+    )
+
+    assert launch_options["headless"] is True
 
 
 def test_spider_settings_define_authenticated_playwright_context() -> None:

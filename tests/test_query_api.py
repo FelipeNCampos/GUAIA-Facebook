@@ -69,8 +69,6 @@ def test_create_query_persists_and_publishes(tmp_path) -> None:
             {
                 "subject": "candidato exemplo",
                 "query_source": "manual",
-                "start_date": "2026-05-01",
-                "end_date": "2026-05-05",
             }
         ]
     }
@@ -380,8 +378,6 @@ def test_retry_search_stage_reenqueues_existing_query(tmp_path) -> None:
                         "id_query": "query-retry-search-1",
                         "subject": "tema",
                         "query_source": "api",
-                        "start_date": "2026-05-01",
-                        "end_date": "2026-05-05",
                     }
                 ]
             },

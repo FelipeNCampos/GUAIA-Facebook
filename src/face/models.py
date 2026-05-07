@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -16,14 +16,6 @@ class QueryCreateInput(BaseModel):
     id_query: str | None = Field(default=None, min_length=1, max_length=64)
     subject: str = Field(min_length=1, max_length=512)
     query_source: str = Field(min_length=1, max_length=128)
-    start_date: date | None = None
-    end_date: date | None = None
-
-    @model_validator(mode="after")
-    def validate_date_range(self) -> QueryCreateInput:
-        if self.start_date and self.end_date and self.start_date > self.end_date:
-            raise ValueError("start_date must be less than or equal to end_date")
-        return self
 
 
 class CreateQueriesRequest(BaseModel):
@@ -50,8 +42,6 @@ class QueryStatusResponse(BaseModel):
     id_query: str
     subject: str
     query_source: str
-    start_date: date | None
-    end_date: date | None
     status_current: str
     created_at: datetime
     updated_at: datetime

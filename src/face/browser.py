@@ -10,6 +10,11 @@ AUTHENTICATED_CONTEXT_NAME = "authenticated"
 
 
 def _should_force_headless(resolved: Settings) -> bool:
+    headless_mode = resolved.playwright_headless_mode.strip().lower()
+    if headless_mode in {"headless", "true", "1"}:
+        return True
+    if headless_mode in {"headed", "false", "0"}:
+        return False
     if resolved.playwright_headless:
         return True
     if os.name == "nt":

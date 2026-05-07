@@ -28,6 +28,7 @@ services:
       APP_LOG_JSON: ${APP_LOG_JSON:-true}
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set in .env}
       RABBITMQ_URL: ${RABBITMQ_URL:?RABBITMQ_URL must be set in .env}
+      SEARXNG_INTERNAL_URL: ${SEARXNG_INTERNAL_URL:-http://searxng:8080}
     ports:
       - "8000:8000"
     develop:
@@ -52,6 +53,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      searxng:
+        condition: service_started
 
   face-search-spider:
     build:
@@ -64,6 +67,7 @@ services:
       APP_LOG_JSON: ${APP_LOG_JSON:-true}
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set in .env}
       RABBITMQ_URL: ${RABBITMQ_URL:?RABBITMQ_URL must be set in .env}
+      SEARXNG_INTERNAL_URL: ${SEARXNG_INTERNAL_URL:-http://searxng:8080}
     develop:
       watch:
         - action: sync+restart
@@ -86,6 +90,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      searxng:
+        condition: service_started
 
   face-enrich-spider:
     build:
@@ -124,6 +130,17 @@ services:
       rabbitmq:
         condition: service_healthy
 
+  searxng:
+    image: ghcr.io/searxng/searxng:latest
+    environment:
+      SEARXNG_BASE_URL: ${SEARXNG_BASE_URL:-http://localhost:8081/}
+      SEARXNG_SECRET: ${SEARXNG_SECRET:?SEARXNG_SECRET must be set in .env}
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./docker/searxng/settings.yml:/etc/searxng/settings.yml:ro
+      - searxng-cache:/var/cache/searxng
+
   rabbitmq:
     image: rabbitmq:3-management
     environment:
@@ -157,3 +174,4 @@ services:
 volumes:
   postgres-data:
   playwright-browsers:
+  searxng-cache:

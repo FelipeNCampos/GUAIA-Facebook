@@ -2,68 +2,39 @@ from __future__ import annotations
 
 from face.url_classifier import classify_url
 from face.url_utils import (
-    build_bing_search_url,
-    build_google_custom_search_url,
-    build_google_search_url,
+    build_search_query,
+    build_searxng_search_url,
+    decode_facebook_redirect_url,
     extract_facebook_urls_from_text,
     normalize_url,
+    strip_tracking_params,
 )
 
 
-def test_build_google_search_url_includes_subject_and_dates() -> None:
-    url = build_google_search_url(
-        subject="candidato teste",
-        start_date="2026-05-01",
-        end_date="2026-05-05",
+def test_build_search_query_targets_facebook_without_date_filters() -> None:
+    query = build_search_query("candidato teste")
+
+    assert query == 'site:facebook.com "candidato teste"'
+    assert "after:" not in query
+    assert "before:" not in query
+
+
+def test_build_searxng_search_url_uses_json_api_parameters() -> None:
+    url = build_searxng_search_url(
+        base_url="http://searxng:8080",
+        subject=build_search_query("candidato teste"),
+        enabled_engines="google,bing",
+        page_number=2,
     )
 
+    assert url.startswith("http://searxng:8080/search?")
     assert "site%3Afacebook.com" in url
     assert "candidato+teste" in url
-    assert "after%3A2026-05-01" in url
-    assert "before%3A2026-05-05" in url
-    assert "hl=pt-BR" in url
-    assert "gl=br" in url
-    assert "num=10" in url
-    assert "pws=0" in url
-    assert "filter=0" in url
-
-
-def test_build_google_custom_search_url_uses_official_api_parameters() -> None:
-    url = build_google_custom_search_url(
-        api_key="api-key",
-        search_engine_id="engine-id",
-        subject="candidato teste",
-        start_date="2026-05-01",
-        end_date="2026-05-05",
-        start_index=11,
-        results_per_page=20,
-    )
-
-    assert url.startswith("https://customsearch.googleapis.com/customsearch/v1?")
-    assert "key=api-key" in url
-    assert "cx=engine-id" in url
-    assert "site%3Afacebook.com" in url
-    assert "num=10" in url
-    assert "start=11" in url
-
-
-def test_build_bing_search_url_includes_subject_and_dates() -> None:
-    url = build_bing_search_url(
-        subject="candidato teste",
-        start_date="2026-05-01",
-        end_date="2026-05-05",
-        first_result=11,
-    )
-
-    assert url.startswith("https://www.bing.com/search?")
-    assert "site%3Afacebook.com" in url
-    assert "candidato+teste" in url
-    assert "after%3A2026-05-01" in url
-    assert "before%3A2026-05-05" in url
-    assert "setlang=pt-BR" in url
-    assert "cc=BR" in url
+    assert "format=json" in url
+    assert "engines=google%2Cbing" in url
+    assert "categories=general" in url
+    assert "pageno=2" in url
     assert "count=10" in url
-    assert "first=11" in url
 
 
 def test_normalize_url_extracts_google_redirect_and_removes_tracking() -> None:
@@ -117,3 +88,27 @@ def test_classify_url_supports_post_video_and_group() -> None:
     assert classify_url("https://www.facebook.com/foo/posts/123") == "post"
     assert classify_url("https://www.facebook.com/foo/videos/456") == "video"
     assert classify_url("https://www.facebook.com/groups/bar") == "group"
+    assert classify_url("https://www.facebook.com/reel/123456") == "reel"
+    assert classify_url("https://www.facebook.com/foo") == "page"
+
+
+def test_strip_tracking_params_removes_classification_noise() -> None:
+    url = (
+        "https://www.facebook.com/reel/3943180995975088"
+        "?locale=pt_BR&set=a.1&__cft__[0]=tracking&__tn__=R"
+    )
+
+    stripped = strip_tracking_params(url)
+
+    assert stripped == "https://www.facebook.com/reel/3943180995975088"
+
+
+def test_decode_facebook_redirect_url_extracts_external_target() -> None:
+    raw = (
+        "https://l.facebook.com/l.php?u=https%3A%2F%2Fexample.org%2Flanding%3Fa%3D1"
+        "&h=tracking"
+    )
+
+    decoded = decode_facebook_redirect_url(raw)
+
+    assert decoded == "https://example.org/landing?a=1"

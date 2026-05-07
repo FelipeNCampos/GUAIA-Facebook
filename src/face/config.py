@@ -22,6 +22,10 @@ class Settings(BaseSettings):
 
     facebook_session_profile: str = Field(default="default", alias="FACEBOOK_SESSION_PROFILE")
     playwright_headless: bool = Field(default=False, alias="PLAYWRIGHT_HEADLESS")
+    playwright_headless_mode: str = Field(
+        default="auto",
+        alias="PLAYWRIGHT_HEADLESS_MODE",
+    )
     playwright_browsers_path: str = Field(
         default="/ms-playwright", alias="PLAYWRIGHT_BROWSERS_PATH"
     )
@@ -29,51 +33,46 @@ class Settings(BaseSettings):
         default="./session_data", alias="PLAYWRIGHT_USER_DATA_DIR"
     )
 
-    google_search_language: str = Field(default="pt-BR", alias="GOOGLE_SEARCH_LANGUAGE")
-    google_search_region: str = Field(default="br", alias="GOOGLE_SEARCH_REGION")
-    google_search_provider: str = Field(default="auto", alias="GOOGLE_SEARCH_PROVIDER")
-    google_search_api_key: str = Field(default="", alias="GOOGLE_SEARCH_API_KEY")
-    google_search_engine_id: str = Field(default="", alias="GOOGLE_SEARCH_ENGINE_ID")
-    google_search_fallback_provider: str = Field(
-        default="bing",
-        alias="GOOGLE_SEARCH_FALLBACK_PROVIDER",
+    searxng_internal_url: str = Field(
+        default="http://searxng:8080",
+        alias="SEARXNG_INTERNAL_URL",
     )
-    google_search_results_per_page: int = Field(
-        default=10, alias="GOOGLE_SEARCH_RESULTS_PER_PAGE"
+    searxng_search_language: str = Field(
+        default="pt-BR",
+        alias="SEARXNG_SEARCH_LANGUAGE",
     )
-    google_search_consent_cookie: str = Field(
-        default="YES+cb.20210328-17-p0.en+FX+667",
-        alias="GOOGLE_SEARCH_CONSENT_COOKIE",
+    searxng_search_region: str = Field(default="br", alias="SEARXNG_SEARCH_REGION")
+    searxng_search_category: str = Field(
+        default="general",
+        alias="SEARXNG_SEARCH_CATEGORY",
     )
-    google_search_block_retry_limit: int = Field(
-        default=2, alias="GOOGLE_SEARCH_BLOCK_RETRY_LIMIT"
+    searxng_enabled_engines: str = Field(
+        default="google,bing",
+        alias="SEARXNG_ENABLED_ENGINES",
     )
-    google_search_browser_fallback_enabled: bool = Field(
-        default=True,
-        alias="GOOGLE_SEARCH_BROWSER_FALLBACK_ENABLED",
+    searxng_safe_search: int = Field(default=0, alias="SEARXNG_SAFE_SEARCH")
+    searxng_results_per_page: int = Field(
+        default=10,
+        alias="SEARXNG_RESULTS_PER_PAGE",
     )
-    google_search_browser_fallback_limit: int = Field(
-        default=1,
-        alias="GOOGLE_SEARCH_BROWSER_FALLBACK_LIMIT",
+    search_max_pages: int = Field(default=5, alias="SEARCH_MAX_PAGES")
+    search_block_retry_limit: int = Field(default=2, alias="SEARCH_BLOCK_RETRY_LIMIT")
+    search_download_delay: float = Field(default=1.0, alias="SEARCH_DOWNLOAD_DELAY")
+    search_concurrent_requests_per_domain: int = Field(
+        default=2,
+        alias="SEARCH_CONCURRENT_REQUESTS_PER_DOMAIN",
     )
-    google_search_download_delay: float = Field(
-        default=6.0, alias="GOOGLE_SEARCH_DOWNLOAD_DELAY"
+    search_autothrottle_target_concurrency: float = Field(
+        default=1.0,
+        alias="SEARCH_AUTOTHROTTLE_TARGET_CONCURRENCY",
     )
-    google_search_concurrent_requests_per_domain: int = Field(
-        default=1,
-        alias="GOOGLE_SEARCH_CONCURRENT_REQUESTS_PER_DOMAIN",
+    search_autothrottle_start_delay: float = Field(
+        default=1.0,
+        alias="SEARCH_AUTOTHROTTLE_START_DELAY",
     )
-    google_search_autothrottle_target_concurrency: float = Field(
-        default=0.5,
-        alias="GOOGLE_SEARCH_AUTOTHROTTLE_TARGET_CONCURRENCY",
-    )
-    google_search_autothrottle_start_delay: float = Field(
-        default=6.0,
-        alias="GOOGLE_SEARCH_AUTOTHROTTLE_START_DELAY",
-    )
-    google_search_autothrottle_max_delay: float = Field(
-        default=90.0,
-        alias="GOOGLE_SEARCH_AUTOTHROTTLE_MAX_DELAY",
+    search_autothrottle_max_delay: float = Field(
+        default=30.0,
+        alias="SEARCH_AUTOTHROTTLE_MAX_DELAY",
     )
 
     scrapy_concurrent_requests: int = Field(default=16, alias="SCRAPY_CONCURRENT_REQUESTS")

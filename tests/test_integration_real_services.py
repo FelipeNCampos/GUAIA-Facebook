@@ -50,20 +50,20 @@ async def consume_payload_and_ack(queue_name: str) -> dict[str, object] | None:
 
 
 @contextmanager
-def search_results_server(html: str):
+def search_results_server(payload: str, *, content_type: str = "application/json; charset=utf-8"):
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
-            if self.path != "/search":
+            if not self.path.startswith("/search"):
                 self.send_response(404)
                 self.end_headers()
                 return
 
-            payload = html.encode("utf-8")
+            encoded_payload = payload.encode("utf-8")
             self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(encoded_payload)))
             self.end_headers()
-            self.wfile.write(payload)
+            self.wfile.write(encoded_payload)
 
         def log_message(self, format: str, *args) -> None:  # noqa: A003
             return
@@ -133,20 +133,20 @@ def test_google_search_spider_persists_to_postgres_and_publishes_to_rabbitmq(
         )
     )
 
-    html = """
-    <html>
-        <body>
-            <a
-                href="/url?q=https%3A%2F%2Fwww.facebook.com%2Ffoo%2Fposts%2F123%3Fref%3Dwatch"
-            >
-                Resultado
-            </a>
-            <a href="https://example.com/ignorar">Ignorar</a>
-        </body>
-    </html>
+    payload = """
+    {
+        "results": [
+            {
+                "url": "https://www.facebook.com/foo/posts/123?ref=watch"
+            },
+            {
+                "url": "https://example.com/ignorar"
+            }
+        ]
+    }
     """
 
-    with search_results_server(html) as search_url:
+    with search_results_server(payload) as search_url:
         child_env = os.environ.copy()
         child_env["FACE_SEARCH_JOB_JSON"] = json.dumps(
             {

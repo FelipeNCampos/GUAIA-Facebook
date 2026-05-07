@@ -9,7 +9,7 @@ from face.queues import QueueNames
 from face.repository import FaceJobRepository, FaceRecordRepository
 from face.spiders.google_search import GoogleSearchSpider
 from scrapy import Request
-from scrapy.http import HtmlResponse, TextResponse
+from scrapy.http import TextResponse
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -27,11 +27,6 @@ def build_session_factory(database_url: str) -> sessionmaker[Session]:
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
     return sessionmaker(bind=engine, autoflush=False, autocommit=False)
-
-
-def make_html_response(url: str, html: str, request: Request | None = None) -> HtmlResponse:
-    request = request or Request(url=url)
-    return HtmlResponse(url=url, request=request, body=html.encode("utf-8"), encoding="utf-8")
 
 
 def make_json_response(
@@ -70,13 +65,39 @@ def build_crawler_stub():
     )()
 
 
-class BrowserFailureStub:
-    def __init__(self, request: Request, error: Exception) -> None:
-        self.request = request
-        self.value = error
+def test_google_search_spider_builds_searxng_request() -> None:
+    spider = GoogleSearchSpider(
+        id_query="query-headers-1",
+        subject="tema",
+        query_source="api",
+        user_agents=["test-agent"],
+        search_language="pt-BR",
+        search_region="br",
+        enabled_engines="google,bing",
+    )
 
-    def getErrorMessage(self) -> str:
-        return str(self.value)
+    request = next(spider.start_requests())
+
+    assert request.headers["User-Agent"].decode("utf-8") == "test-agent"
+    assert request.headers["Accept-Language"].decode("utf-8").startswith("pt-BR")
+    assert request.url.startswith("http://searxng:8080/search?")
+    assert "format=json" in request.url
+    assert "site%3Afacebook.com" in request.url
+    assert "tema" in request.url
+    assert "engines=google%2Cbing" in request.url
+    assert request.meta["search_attempt"] == 1
+    assert request.meta["search_retry_count"] == 0
+
+
+def test_google_search_spider_uses_env_backed_default_max_pages_when_not_provided() -> None:
+    spider = GoogleSearchSpider(
+        id_query="query-default-pages-1",
+        subject="tema",
+        query_source="api",
+        user_agents=["test-agent"],
+    )
+
+    assert spider.max_pages == 5
 
 
 def test_google_search_spider_parses_urls_and_next_page() -> None:
@@ -84,27 +105,21 @@ def test_google_search_spider_parses_urls_and_next_page() -> None:
         id_query="query-1",
         subject="tema",
         query_source="api",
-        start_date="2026-05-01",
-        end_date="2026-05-05",
         max_pages=2,
         user_agents=["test-agent"],
+        results_per_page=2,
     )
     request = next(spider.start_requests())
-    response = make_html_response(
+    response = make_json_response(
         request.url,
         """
-        <html>
-            <body>
-                <a
-                    href="/url?q=https%3A%2F%2Fwww.facebook.com%2Ffoo%2Fposts%2F123%3Fref%3Dwatch"
-                >
-                    A
-                </a>
-                <a href="https://m.facebook.com/bar/videos/456/?__tn__=R">B</a>
-                <a href="https://example.com/ignore">C</a>
-                <a id="pnnext" href="/search?q=next-page">Next</a>
-            </body>
-        </html>
+        {
+            "results": [
+                {"url": "https://www.facebook.com/foo/posts/123?ref=watch"},
+                {"url": "https://m.facebook.com/bar/videos/456/?__tn__=R"},
+                {"url": "https://example.com/ignore"}
+            ]
+        }
         """,
         request=request,
     )
@@ -117,34 +132,35 @@ def test_google_search_spider_parses_urls_and_next_page() -> None:
     assert len(items) == 2
     assert items[0]["category"] == "post"
     assert items[0]["url_normalized"] == "https://www.facebook.com/foo/posts/123"
+    assert items[0]["discovered_via"] == "searxng"
     assert items[1]["category"] == "video"
+    assert items[1]["url_normalized"] == "https://www.facebook.com/bar/videos/456"
     assert len(requests) == 1
     assert requests[0].meta["page_number"] == 2
-    assert requests[0].headers["Referer"].decode("utf-8") == request.url
+    assert requests[0].meta["search_attempt"] == 1
+    assert "site%3Afacebook.com" in requests[0].url
+    assert "pageno=2" in requests[0].url
 
 
-def test_google_search_spider_extracts_facebook_urls_from_rendered_text_when_anchors_fail() -> None:
+def test_google_search_spider_classifies_tracked_reel_url_from_clean_path() -> None:
     spider = GoogleSearchSpider(
-        id_query="query-text-fallback-1",
+        id_query="query-reel-1",
         subject="tema",
         query_source="api",
         max_pages=1,
         user_agents=["test-agent"],
     )
-    spider.crawler = build_crawler_stub()
     request = next(spider.start_requests())
-    response = make_html_response(
+    response = make_json_response(
         request.url,
         """
-        <html>
-            <body>
-                <script>
-                    window.__DATA__ = {
-                        "link": "https:\\/\\/m.facebook.com\\/foo\\/posts\\/123\\/?ref=watch"
-                    };
-                </script>
-            </body>
-        </html>
+        {
+            "results": [
+                {
+                    "url": "https://www.facebook.com/reel/3943180995975088?locale=pt_BR&set=a.1"
+                }
+            ]
+        }
         """,
         request=request,
     )
@@ -152,97 +168,39 @@ def test_google_search_spider_extracts_facebook_urls_from_rendered_text_when_anc
     results = list(spider.parse_search(response))
 
     items = [result for result in results if isinstance(result, FacebookURLItem)]
-
     assert len(items) == 1
-    assert items[0]["url_normalized"] == "https://www.facebook.com/foo/posts/123"
+    assert items[0]["category"] == "reel"
 
 
-def test_google_search_spider_uses_browser_like_headers_and_consent_cookie() -> None:
+def test_google_search_spider_marks_invalid_json_as_blocked() -> None:
     spider = GoogleSearchSpider(
-        id_query="query-headers-1",
+        id_query="query-invalid-json-1",
         subject="tema",
         query_source="api",
+        max_pages=1,
         user_agents=["test-agent"],
-        search_language="pt-BR",
-        google_consent_cookie="YES+test",
-    )
-
-    request = next(spider.start_requests())
-
-    assert request.headers["User-Agent"].decode("utf-8") == "test-agent"
-    assert request.headers["Accept-Language"].decode("utf-8").startswith("pt-BR")
-    assert request.headers["Sec-Fetch-Site"].decode("utf-8") == "none"
-    assert request.cookies["CONSENT"] == "YES+test"
-    assert request.meta["google_block_retry_count"] == 0
-
-
-def test_google_search_spider_prefers_custom_search_api_when_configured() -> None:
-    spider = GoogleSearchSpider(
-        id_query="query-api-1",
-        subject="tema",
-        query_source="api",
-        google_search_provider="auto",
-        google_search_api_key="api-key",
-        google_search_engine_id="engine-id",
-    )
-
-    request = next(spider.start_requests())
-
-    assert request.url.startswith("https://customsearch.googleapis.com/customsearch/v1?")
-    assert "key=api-key" in request.url
-    assert "cx=engine-id" in request.url
-    assert request.callback == spider.parse_custom_search
-    assert request.meta["download_slot"] == "google_custom_search_api"
-
-
-def test_google_search_spider_parses_custom_search_json_results() -> None:
-    spider = GoogleSearchSpider(
-        id_query="query-api-results-1",
-        subject="tema",
-        query_source="api",
-        google_search_provider="api",
-        google_search_api_key="api-key",
-        google_search_engine_id="engine-id",
-        max_pages=2,
     )
     request = next(spider.start_requests())
     response = make_json_response(
         request.url,
-        """
-        {
-            "items": [
-                {"link": "https://www.facebook.com/foo/posts/123?ref=watch"},
-                {"link": "https://example.com/ignore"}
-            ],
-            "queries": {
-                "nextPage": [{"startIndex": 11}]
-            }
-        }
-        """,
+        "{invalid-json",
         request=request,
     )
 
-    results = list(spider.parse_custom_search(response))
+    results = list(spider.parse_search(response))
 
-    items = [result for result in results if isinstance(result, FacebookURLItem)]
-    requests = [result for result in results if isinstance(result, Request)]
-
-    assert len(items) == 1
-    assert items[0]["url_normalized"] == "https://www.facebook.com/foo/posts/123"
-    assert items[0]["discovered_via"] == "google_custom_search_api"
-    assert len(requests) == 1
-    assert requests[0].meta["start_index"] == 11
+    assert results == []
+    assert spider.search_blocked_details is not None
+    assert spider.search_blocked_details["marker_types"] == ["invalid_json_response"]
 
 
-def test_google_search_spider_retries_custom_search_api_rate_limit() -> None:
+def test_google_search_spider_falls_back_to_relaxed_bing_query_when_primary_finds_no_urls() -> None:
     spider = GoogleSearchSpider(
-        id_query="query-api-retry-1",
-        subject="tema",
+        id_query="query-fallback-1",
+        subject="bolsonaro",
         query_source="api",
-        google_search_provider="api",
-        google_search_api_key="api-key",
-        google_search_engine_id="engine-id",
-        max_block_retries=1,
+        max_pages=1,
+        user_agents=["test-agent"],
     )
     spider.crawler = build_crawler_stub()
     request = next(spider.start_requests())
@@ -250,27 +208,132 @@ def test_google_search_spider_retries_custom_search_api_rate_limit() -> None:
         request.url,
         """
         {
-            "error": {
-                "code": 429,
-                "errors": [{"reason": "rateLimitExceeded"}]
-            }
+            "results": [
+                {"url": "https://example.com/ignore"}
+            ]
         }
         """,
         request=request,
-        status=429,
     )
 
-    results = list(spider.parse_custom_search(response))
+    results = list(spider.parse_search(response))
 
     assert len(results) == 1
-    retry_request = results[0]
-    assert isinstance(retry_request, Request)
-    assert retry_request.dont_filter is True
-    assert retry_request.meta["google_block_retry_count"] == 1
-    assert spider.crawler.stats.values["face/search_api_retry_count"] == 1
+    fallback_request = results[0]
+    assert isinstance(fallback_request, Request)
+    assert spider.items_found == 0
+    assert spider.search_attempt == 2
+    assert fallback_request.meta["page_number"] == 1
+    assert fallback_request.meta["search_attempt"] == 2
+    assert "format=json" in fallback_request.url
+    assert "engines=bing" in fallback_request.url
+    assert "facebook.com+%22bolsonaro%22" in fallback_request.url
+    assert "site%3Afacebook.com" not in fallback_request.url
+    assert spider.crawler.stats.values["face/search_empty_page_count"] == 1
+    assert spider.crawler.stats.values["face/search_bing_fallback_count"] == 1
 
 
-def test_google_search_spider_retries_blocked_page_before_marking_blocked() -> None:
+def test_google_search_spider_only_falls_back_after_primary_pagination_exhausts() -> None:
+    spider = GoogleSearchSpider(
+        id_query="query-fallback-pages-1",
+        subject="bolsonaro",
+        query_source="api",
+        max_pages=2,
+        user_agents=["test-agent"],
+        results_per_page=2,
+    )
+    spider.crawler = build_crawler_stub()
+    first_request = next(spider.start_requests())
+    first_response = make_json_response(
+        first_request.url,
+        """
+        {
+            "results": [
+                {"url": "https://example.com/ignore-1"},
+                {"url": "https://example.com/ignore-2"}
+            ]
+        }
+        """,
+        request=first_request,
+    )
+
+    first_results = list(spider.parse_search(first_response))
+
+    assert len(first_results) == 1
+    second_primary_request = first_results[0]
+    assert isinstance(second_primary_request, Request)
+    assert second_primary_request.meta["page_number"] == 2
+    assert second_primary_request.meta["search_attempt"] == 1
+    assert "site%3Afacebook.com" in second_primary_request.url
+
+    second_primary_response = make_json_response(
+        second_primary_request.url,
+        """
+        {
+            "results": [
+                {"url": "https://example.com/ignore-3"}
+            ]
+        }
+        """,
+        request=second_primary_request,
+    )
+
+    second_results = list(spider.parse_search(second_primary_response))
+
+    assert len(second_results) == 1
+    fallback_request = second_results[0]
+    assert isinstance(fallback_request, Request)
+    assert fallback_request.meta["search_attempt"] == 2
+    assert "engines=bing" in fallback_request.url
+    assert "facebook.com+%22bolsonaro%22" in fallback_request.url
+    assert spider.crawler.stats.values["face/search_empty_page_count"] == 2
+    assert spider.crawler.stats.values["face/search_bing_fallback_count"] == 1
+
+
+def test_google_search_spider_paginates_normally_during_fallback_attempt() -> None:
+    spider = GoogleSearchSpider(
+        id_query="query-fallback-pages-2",
+        subject="bolsonaro",
+        query_source="api",
+        max_pages=2,
+        user_agents=["test-agent"],
+        results_per_page=1,
+    )
+    spider.search_attempt = 2
+    spider.crawler = build_crawler_stub()
+    fallback_request = spider._build_search_request(
+        spider._build_search_url(page_number=1, search_attempt=2),
+        page_number=1,
+        search_attempt=2,
+    )
+    fallback_response = make_json_response(
+        fallback_request.url,
+        """
+        {
+            "results": [
+                {"url": "https://www.facebook.com/foo/posts/123?ref=watch"}
+            ]
+        }
+        """,
+        request=fallback_request,
+    )
+
+    results = list(spider.parse_search(fallback_response))
+
+    items = [result for result in results if isinstance(result, FacebookURLItem)]
+    requests = [result for result in results if isinstance(result, Request)]
+
+    assert len(items) == 1
+    assert spider.items_found == 1
+    assert len(requests) == 1
+    next_request = requests[0]
+    assert next_request.meta["page_number"] == 2
+    assert next_request.meta["search_attempt"] == 2
+    assert "engines=bing" in next_request.url
+    assert "facebook.com+%22bolsonaro%22" in next_request.url
+
+
+def test_google_search_spider_retries_http_error_before_marking_blocked() -> None:
     spider = GoogleSearchSpider(
         id_query="query-retry-1",
         subject="tema",
@@ -281,249 +344,22 @@ def test_google_search_spider_retries_blocked_page_before_marking_blocked() -> N
     )
     spider.crawler = build_crawler_stub()
     request = next(spider.start_requests())
-    response = make_html_response(
-        "https://www.google.com/sorry/index?continue=teste",
-        """
-        <html>
-            <head><title>Google Search</title></head>
-            <body>
-                <p>Our systems have detected unusual traffic from your computer network.</p>
-                <a href="/httpservice/retry/enablejs?sei=abc">Enable JS</a>
-            </body>
-        </html>
-        """,
-        request=request,
-    )
-
-    results = list(spider.parse_search(response))
-
-    assert len(results) == 1
-    browser_request = results[0]
-    assert isinstance(browser_request, Request)
-    assert browser_request.dont_filter is True
-    assert browser_request.callback == spider.parse_browser_search
-    assert browser_request.errback == spider.handle_browser_search_error
-    assert browser_request.meta["playwright"] is True
-    assert browser_request.meta["browser_fallback_attempt"] == 1
-    assert spider.search_blocked_details is None
-    assert spider.crawler.stats.values["face/search_browser_fallback_count"] == 1
-
-
-def test_google_search_spider_marks_blocked_after_browser_fallback_still_hits_challenge() -> None:
-    spider = GoogleSearchSpider(
-        id_query="query-browser-blocked-1",
-        subject="tema",
-        query_source="api",
-        max_pages=1,
-        user_agents=["test-agent"],
-        max_block_retries=1,
-    )
-    spider.crawler = build_crawler_stub()
-    request = Request(
-        url="https://www.google.com/search?q=tema",
-        meta={"page_number": 1, "browser_fallback_attempt": 1},
-    )
-    response = make_html_response(
+    response = make_json_response(
         request.url,
-        """
-        <html>
-            <head><title>Google Search</title></head>
-            <body>
-                <p>Before you continue to Google Search</p>
-                <a href="https://consent.google.com/somewhere">Consent</a>
-            </body>
-        </html>
-        """,
+        '{"error":"temporary"}',
         request=request,
-    )
-
-    results = list(spider.parse_browser_search(response))
-
-    assert len(results) == 1
-    assert isinstance(results[0], Request)
-    assert results[0].callback == spider.parse_bing_search
-    assert spider.search_blocked_details is None
-    assert spider.crawler.stats.values["face/search_provider_fallback_count"] == 1
-
-
-def test_google_search_spider_marks_blocked_when_browser_fallback_launch_fails() -> None:
-    spider = GoogleSearchSpider(
-        id_query="query-browser-error-1",
-        subject="tema",
-        query_source="api",
-        max_pages=1,
-        user_agents=["test-agent"],
-    )
-    spider.crawler = build_crawler_stub()
-    request = Request(
-        url="https://www.google.com/search?q=tema",
-        meta={
-            "page_number": 1,
-            "browser_fallback_attempt": 1,
-            "google_block_retry_count": 2,
-        },
-    )
-
-    results = spider.handle_browser_search_error(
-        BrowserFailureStub(
-            request,
-            RuntimeError("Missing X server or $DISPLAY while launching Playwright"),
-        )
-    )
-
-    assert len(results) == 1
-    assert isinstance(results[0], Request)
-    assert results[0].callback == spider.parse_bing_search
-    assert spider.search_blocked_details is None
-    assert spider.crawler.stats.values["face/search_provider_fallback_count"] == 1
-
-
-def test_google_search_spider_detects_google_block_page() -> None:
-    spider = GoogleSearchSpider(
-        id_query="query-blocked-1",
-        subject="tema",
-        query_source="api",
-        max_pages=1,
-        user_agents=["test-agent"],
-        google_search_provider="html",
-        max_block_retries=0,
-    )
-    spider.browser_fallback_enabled = False
-    spider.google_search_fallback_provider = ""
-    spider.crawler = build_crawler_stub()
-    request = next(spider.start_requests())
-    response = make_html_response(
-        "https://www.google.com/sorry/index?continue=teste",
-        """
-        <html>
-            <head><title>Google Search</title></head>
-            <body>
-                <p>Our systems have detected unusual traffic from your computer network.</p>
-                <a href="/httpservice/retry/enablejs?sei=abc">Enable JS</a>
-                <a href="https://support.google.com/websearch">Ajuda</a>
-            </body>
-        </html>
-        """,
-        request=request,
-    )
-
-    results = list(spider.parse_search(response))
-
-    assert results == []
-    assert spider.search_blocked_details is not None
-    assert spider.search_blocked_details["response_url"] == response.url
-    assert spider.search_blocked_details["anchor_count"] == 2
-    assert spider.search_blocked_details["marker_types"] == [
-        "enablejs_challenge",
-        "google_sorry",
-        "unusual_traffic",
-    ]
-    assert spider.search_blocked_details["retry_count"] == 0
-    assert spider.crawler.stats.values["face/search_blocked"] == 1
-
-
-def test_google_search_spider_treats_empty_google_page_as_soft_block() -> None:
-    spider = GoogleSearchSpider(
-        id_query="query-empty-soft-block-1",
-        subject="tema",
-        query_source="api",
-        max_pages=1,
-        user_agents=["test-agent"],
-        google_search_provider="html",
-        max_block_retries=0,
-    )
-    spider.browser_fallback_enabled = False
-    spider.google_search_fallback_provider = ""
-    spider.crawler = build_crawler_stub()
-    request = next(spider.start_requests())
-    response = make_html_response(
-        request.url,
-        """
-        <html>
-            <head><title>Google Search</title></head>
-            <body>
-                <a href="/preferences">Preferences</a>
-                <a href="/advanced_search">Advanced search</a>
-                <a href="/history">History</a>
-            </body>
-        </html>
-        """,
-        request=request,
-    )
-
-    results = list(spider.parse_search(response))
-
-    assert results == []
-    assert spider.search_blocked_details is not None
-    assert spider.search_blocked_details["marker_types"] == ["empty_results_page"]
-
-
-def test_google_search_spider_switches_to_bing_after_google_block() -> None:
-    spider = GoogleSearchSpider(
-        id_query="query-fallback-1",
-        subject="tema",
-        query_source="api",
-        max_pages=1,
-        user_agents=["test-agent"],
-        google_search_provider="html",
-        max_block_retries=0,
-    )
-    spider.browser_fallback_enabled = False
-    spider.crawler = build_crawler_stub()
-    request = next(spider.start_requests())
-    response = make_html_response(
-        "https://www.google.com/sorry/index?continue=teste",
-        """
-        <html>
-            <head><title>Google Search</title></head>
-            <body>
-                <p>Our systems have detected unusual traffic from your computer network.</p>
-                <a href="/httpservice/retry/enablejs?sei=abc">Enable JS</a>
-            </body>
-        </html>
-        """,
-        request=request,
+        status=503,
     )
 
     results = list(spider.parse_search(response))
 
     assert len(results) == 1
-    assert isinstance(results[0], Request)
-    assert results[0].callback == spider.parse_bing_search
-    assert "bing.com/search" in results[0].url
+    retry_request = results[0]
+    assert isinstance(retry_request, Request)
+    assert retry_request.dont_filter is True
+    assert retry_request.meta["search_retry_count"] == 1
     assert spider.search_blocked_details is None
-    assert spider.crawler.stats.values["face/search_provider_fallback_count"] == 1
-
-
-def test_google_search_spider_parses_bing_results() -> None:
-    spider = GoogleSearchSpider(
-        id_query="query-bing-1",
-        subject="tema",
-        query_source="api",
-        max_pages=1,
-        user_agents=["test-agent"],
-    )
-    request = Request(url="https://www.bing.com/search?q=tema", meta={"page_number": 1})
-    response = make_html_response(
-        request.url,
-        """
-        <html>
-            <body>
-                <a href="https://www.facebook.com/foo/posts/123?ref=watch">A</a>
-                <a href="https://example.com/ignore">B</a>
-            </body>
-        </html>
-        """,
-        request=request,
-    )
-
-    results = list(spider.parse_bing_search(response))
-
-    items = [result for result in results if isinstance(result, FacebookURLItem)]
-
-    assert len(items) == 1
-    assert items[0]["url_normalized"] == "https://www.facebook.com/foo/posts/123"
-    assert items[0]["discovered_via"] == "bing_search"
+    assert spider.crawler.stats.values["face/search_block_retry_count"] == 1
 
 
 def test_pipelines_persist_records_and_publish_discovered_urls(tmp_path) -> None:
@@ -572,7 +408,7 @@ def test_pipelines_persist_records_and_publish_discovered_urls(tmp_path) -> None
         search_page=1,
         search_position=1,
         source_query="tema",
-        discovered_via="google_search",
+        discovered_via="searxng",
     )
 
     persisted_item = persist_pipeline.process_item(item, spider)
@@ -669,7 +505,7 @@ def test_pipelines_mark_empty_search_without_google_block(tmp_path) -> None:
     assert spider.publisher.messages[1][1]["event_type"] == "search.completed"
 
 
-def test_pipelines_mark_blocked_search_when_google_challenges(tmp_path) -> None:
+def test_pipelines_mark_blocked_search_when_backend_fails(tmp_path) -> None:
     db_path = tmp_path / "search_pipeline_blocked.db"
     session_factory = build_session_factory(f"sqlite:///{db_path}")
     job_repository = FaceJobRepository(session_factory)
@@ -700,11 +536,11 @@ def test_pipelines_mark_blocked_search_when_google_challenges(tmp_path) -> None:
     )()
     spider.page_count = 1
     spider.search_blocked_details = {
-        "marker_types": ["google_sorry", "unusual_traffic"],
-        "response_url": "https://www.google.com/sorry/index",
-        "title": "Google Search",
+        "marker_types": ["http_status_503"],
+        "response_url": "http://searxng:8080/search?q=tema",
+        "title": None,
         "page_number": 1,
-        "anchor_count": 3,
+        "anchor_count": 0,
     }
 
     events_pipeline = EventsPipeline()
@@ -725,7 +561,7 @@ def test_pipelines_mark_blocked_search_when_google_challenges(tmp_path) -> None:
         "search.started",
         "search.blocked",
     ]
-    assert events[1].payload["marker_types"] == ["google_sorry", "unusual_traffic"]
+    assert events[1].payload["marker_types"] == ["http_status_503"]
     assert events[1].payload["pages_visited"] == 1
     assert [message[0] for message in spider.publisher.messages] == [
         QueueNames().job_events,

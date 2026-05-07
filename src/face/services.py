@@ -59,8 +59,8 @@ class QueryService:
                     id_query=id_query,
                     subject=query.subject,
                     query_source=query.query_source,
-                    start_date=query.start_date,
-                    end_date=query.end_date,
+                    start_date=None,
+                    end_date=None,
                 )
             except IntegrityError as exc:
                 raise QueryConflictError(f"Query '{id_query}' already exists") from exc
@@ -71,8 +71,6 @@ class QueryService:
                 payload={
                     "subject": query.subject,
                     "query_source": query.query_source,
-                    "start_date": query.start_date.isoformat() if query.start_date else None,
-                    "end_date": query.end_date.isoformat() if query.end_date else None,
                 },
             )
 
@@ -127,8 +125,6 @@ class QueryService:
             id_query=job.id_query,
             subject=job.subject,
             query_source=job.query_source,
-            start_date=job.start_date,
-            end_date=job.end_date,
             status_current=job.status_current,
             created_at=job.created_at,
             updated_at=job.updated_at,
@@ -409,8 +405,6 @@ class QueryService:
             "id_query": id_query,
             "subject": query.subject,
             "query_source": query.query_source,
-            "start_date": query.start_date.isoformat() if query.start_date else None,
-            "end_date": query.end_date.isoformat() if query.end_date else None,
         }
 
     @staticmethod
@@ -419,8 +413,6 @@ class QueryService:
             "id_query": job.id_query,
             "subject": job.subject,
             "query_source": job.query_source,
-            "start_date": job.start_date.isoformat() if job.start_date else None,
-            "end_date": job.end_date.isoformat() if job.end_date else None,
         }
 
     @staticmethod

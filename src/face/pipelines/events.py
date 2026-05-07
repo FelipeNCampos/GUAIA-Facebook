@@ -54,44 +54,67 @@ class EventsPipeline:
             )
 
     def process_item(self, item, spider):  # type: ignore[no-untyped-def]
-        if item.get("item_type") != "facebook_url":
-            return item
-
         if self.job_repository is None or self.publisher is None:
             raise RuntimeError("EventsPipeline not initialized")
 
-        self.discovered_count += 1
-        payload = {
-            "id_query": item["id_query"],
-            "facebook_url": item["url_normalized"],
-            "category": item["category"],
-            "query_source": item.get("query_source", "api"),
-            "record_id": item.get("record_id"),
-        }
-        self.job_repository.add_event(
-            id_query=item["id_query"],
-            event_type="search.url_discovered",
-            payload={
-                **payload,
-                "url": item["url"],
-                "url_normalized": item["url_normalized"],
-            },
-        )
-        spider.crawler.stats.inc_value("face/search_url_discovered_count", 1)
-        spider.crawler.stats.set_value("face/search_discovered_total", self.discovered_count)
-        self._publish_json(self.queue_names.url_discovered, payload)
-        self._publish_json(self.queue_names.enrich_request, payload)
-        self._publish_job_event(
-            {
+        if item.get("item_type") == "facebook_url":
+            self.discovered_count += 1
+            payload = {
                 "id_query": item["id_query"],
-                "event_type": "search.url_discovered",
-                "payload": {
+                "facebook_url": item["url_normalized"],
+                "category": item["category"],
+                "query_source": item.get("query_source", "api"),
+                "record_id": item.get("record_id"),
+            }
+            self.job_repository.add_event(
+                id_query=item["id_query"],
+                event_type="search.url_discovered",
+                payload={
                     **payload,
                     "url": item["url"],
                     "url_normalized": item["url_normalized"],
                 },
+            )
+            spider.crawler.stats.inc_value("face/search_url_discovered_count", 1)
+            spider.crawler.stats.set_value("face/search_discovered_total", self.discovered_count)
+            self._publish_json(self.queue_names.url_discovered, payload)
+            self._publish_json(self.queue_names.enrich_request, payload)
+            self._publish_job_event(
+                {
+                    "id_query": item["id_query"],
+                    "event_type": "search.url_discovered",
+                    "payload": {
+                        **payload,
+                        "url": item["url"],
+                        "url_normalized": item["url_normalized"],
+                    },
+                }
+            )
+            return item
+
+        if item.get("item_type") == "facebook_record":
+            payload = {
+                "id_query": item["id_query"],
+                "record_id": item.get("record_id"),
+                "url": item["url"],
+                "url_normalized": item["url_normalized"],
+                "category": item["category"],
+                "query_source": item.get("query_source", "api"),
+                "status": item.get("status", "enriched"),
             }
-        )
+            self.job_repository.add_event(
+                id_query=item["id_query"],
+                event_type="enrich.completed",
+                payload=payload,
+            )
+            spider.crawler.stats.inc_value("face/enrich_completed_count", 1)
+            self._publish_job_event(
+                {
+                    "id_query": item["id_query"],
+                    "event_type": "enrich.completed",
+                    "payload": payload,
+                }
+            )
         return item
 
     def close_spider(self, spider):  # type: ignore[no-untyped-def]
@@ -138,7 +161,7 @@ class EventsPipeline:
             )
             if blocked_details is not None:
                 logger.warning(
-                    "Search spider blocked by Google",
+                    "Search spider blocked by backend",
                     extra={"service": "face-search-spider", "id_query": spider.id_query},
                 )
             else:

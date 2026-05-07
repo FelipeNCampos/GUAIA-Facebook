@@ -9,11 +9,13 @@ TRACKING_QUERY_PARAMS = {
     "__tn__",
     "eid",
     "fbclid",
+    "locale",
     "locale2",
     "paipv",
     "ref",
     "refid",
     "refsrc",
+    "set",
 }
 
 FACEBOOK_HOST_ALIASES = {
@@ -36,85 +38,40 @@ FACEBOOK_URL_PATTERN = re.compile(
 )
 
 
-def build_google_search_url(
-    *,
-    subject: str,
-    start_date: str | None = None,
-    end_date: str | None = None,
-    language: str = "pt-BR",
-    region: str = "br",
-    results_per_page: int = 10,
-) -> str:
-    query_parts = [f'site:facebook.com "{subject}"']
-    if start_date:
-        query_parts.append(f"after:{start_date}")
-    if end_date:
-        query_parts.append(f"before:{end_date}")
-    params = {
-        "q": " ".join(query_parts),
-        "hl": language,
-        "gl": region,
-        "num": max(1, results_per_page),
-        "pws": "0",
-        "filter": "0",
-    }
-    return f"https://www.google.com/search?{urlencode(params, quote_via=quote_plus)}"
+def build_search_query(subject: str) -> str:
+    return f'site:facebook.com "{subject}"'
 
 
-def build_google_custom_search_url(
+def build_searxng_search_url(
     *,
-    api_key: str,
-    search_engine_id: str,
+    base_url: str,
     subject: str,
-    start_date: str | None = None,
-    end_date: str | None = None,
     language: str = "pt-BR",
     region: str = "br",
+    category: str = "general",
+    enabled_engines: str | None = "google,bing",
+    safe_search: int = 0,
     results_per_page: int = 10,
-    start_index: int = 1,
+    page_number: int = 1,
 ) -> str:
-    query_parts = [f'site:facebook.com "{subject}"']
-    if start_date:
-        query_parts.append(f"after:{start_date}")
-    if end_date:
-        query_parts.append(f"before:{end_date}")
     params = {
-        "key": api_key,
-        "cx": search_engine_id,
-        "q": " ".join(query_parts),
-        "hl": language,
-        "gl": region,
-        "num": min(max(1, results_per_page), 10),
-        "start": max(1, start_index),
-        "safe": "off",
+        "q": subject,
+        "language": language,
+        "pageno": max(1, page_number),
+        "format": "json",
+        "categories": category,
+        "safesearch": max(0, safe_search),
     }
+    if enabled_engines:
+        params["engines"] = enabled_engines
+    if region:
+        params["locale"] = f"{language}_{region.upper()}"
+    if results_per_page > 0:
+        params["count"] = max(1, results_per_page)
+
+    resolved_base_url = base_url.rstrip("/")
     query_string = urlencode(params, quote_via=quote_plus)
-    return f"https://customsearch.googleapis.com/customsearch/v1?{query_string}"
-
-
-def build_bing_search_url(
-    *,
-    subject: str,
-    start_date: str | None = None,
-    end_date: str | None = None,
-    language: str = "pt-BR",
-    region: str = "br",
-    results_per_page: int = 10,
-    first_result: int = 1,
-) -> str:
-    query_parts = [f'site:facebook.com "{subject}"']
-    if start_date:
-        query_parts.append(f"after:{start_date}")
-    if end_date:
-        query_parts.append(f"before:{end_date}")
-    params = {
-        "q": " ".join(query_parts),
-        "setlang": language,
-        "cc": region.upper(),
-        "count": max(1, results_per_page),
-        "first": max(1, first_result),
-    }
-    return f"https://www.bing.com/search?{urlencode(params, quote_via=quote_plus)}"
+    return f"{resolved_base_url}/search?{query_string}"
 
 
 def extract_facebook_url(raw_url: str) -> str | None:
@@ -152,6 +109,44 @@ def extract_facebook_url(raw_url: str) -> str | None:
 
 def normalize_url(raw_url: str) -> str | None:
     return extract_facebook_url(raw_url)
+
+
+def strip_tracking_params(raw_url: str) -> str | None:
+    normalized = normalize_url(raw_url)
+    if normalized is None:
+        return None
+
+    parsed = urlsplit(normalized)
+    cleaned_query = [
+        (key, value)
+        for key, values in parse_qs(parsed.query, keep_blank_values=True).items()
+        if key not in TRACKING_QUERY_PARAMS and not key.startswith("__")
+        for value in values
+    ]
+    query_string = urlencode(cleaned_query, doseq=True, quote_via=quote_plus)
+    return urlunsplit(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path.rstrip("/") or "/",
+            query_string,
+            "",
+        )
+    )
+
+
+def decode_facebook_redirect_url(raw_url: str) -> str | None:
+    if not raw_url:
+        return None
+
+    parsed = urlsplit(raw_url)
+    if parsed.netloc.lower() not in {"l.facebook.com", "lm.facebook.com"}:
+        return None
+
+    target = parse_qs(parsed.query).get("u", [None])[0]
+    if not target:
+        return None
+    return unquote(target).strip() or None
 
 
 def extract_facebook_urls_from_text(raw_text: str) -> list[str]:
