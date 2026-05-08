@@ -74,6 +74,20 @@ class Settings(BaseSettings):
         default=30.0,
         alias="SEARCH_AUTOTHROTTLE_MAX_DELAY",
     )
+    twocaptcha_api_key: str = Field(default="", alias="TWOCAPTCHA_API_KEY")
+    twocaptcha_enabled: bool = Field(default=False, alias="TWOCAPTCHA_ENABLED")
+    twocaptcha_max_solves_per_run: int = Field(
+        default=3,
+        alias="TWOCAPTCHA_MAX_SOLVES_PER_RUN",
+    )
+    twocaptcha_request_timeout: int = Field(
+        default=120,
+        alias="TWOCAPTCHA_REQUEST_TIMEOUT",
+    )
+    twocaptcha_poll_interval: int = Field(
+        default=5,
+        alias="TWOCAPTCHA_POLL_INTERVAL",
+    )
 
     scrapy_concurrent_requests: int = Field(default=16, alias="SCRAPY_CONCURRENT_REQUESTS")
     scrapy_concurrent_requests_per_domain: int = Field(

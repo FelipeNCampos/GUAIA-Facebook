@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from db.base import Base
 from db.models import FaceJob, FaceJobEvent, FaceRecord
+from face.config import get_settings
 from face.items import FacebookURLItem
 from face.pipelines.events import EventsPipeline
 from face.pipelines.persist import PersistPipeline
@@ -20,6 +21,31 @@ class FakePublisher:
 
     async def publish_json(self, queue_name: str, payload: dict[str, object]) -> None:
         self.messages.append((queue_name, payload))
+
+
+class FakeTwoCaptchaClient:
+    def __init__(
+        self,
+        *,
+        enabled: bool = True,
+        max_solves: int = 3,
+        token: str | None = None,
+    ) -> None:
+        self.enabled = enabled
+        self.max_solves = max_solves
+        self.token = token
+        self.used_solves = 0
+        self.attempted_solves = 0
+
+    def can_solve(self) -> bool:
+        return self.enabled and self.used_solves < self.max_solves
+
+    def solve_challenge(self, _challenge, *, logger_extra=None) -> str | None:  # type: ignore[no-untyped-def]
+        self.attempted_solves += 1
+        if self.token is None:
+            return None
+        self.used_solves += 1
+        return self.token
 
 
 def build_session_factory(database_url: str) -> sessionmaker[Session]:
@@ -42,6 +68,23 @@ def make_json_response(
         body=payload.encode("utf-8"),
         encoding="utf-8",
         status=status,
+    )
+
+
+def make_html_response(
+    url: str,
+    payload: str,
+    request: Request | None = None,
+    status: int = 200,
+) -> TextResponse:
+    request = request or Request(url=url)
+    return TextResponse(
+        url=url,
+        request=request,
+        body=payload.encode("utf-8"),
+        encoding="utf-8",
+        status=status,
+        headers={"Content-Type": "text/html; charset=utf-8"},
     )
 
 
@@ -97,7 +140,7 @@ def test_google_search_spider_uses_env_backed_default_max_pages_when_not_provide
         user_agents=["test-agent"],
     )
 
-    assert spider.max_pages == 5
+    assert spider.max_pages == get_settings().search_max_pages
 
 
 def test_google_search_spider_parses_urls_and_next_page() -> None:
@@ -360,6 +403,125 @@ def test_google_search_spider_retries_http_error_before_marking_blocked() -> Non
     assert retry_request.meta["search_retry_count"] == 1
     assert spider.search_blocked_details is None
     assert spider.crawler.stats.values["face/search_block_retry_count"] == 1
+
+
+def test_google_search_spider_solves_captcha_and_retries_search_request() -> None:
+    spider = GoogleSearchSpider(
+        id_query="query-captcha-1",
+        subject="tema",
+        query_source="api",
+        max_pages=1,
+        user_agents=["test-agent"],
+        max_block_retries=1,
+    )
+    spider.crawler = build_crawler_stub()
+    spider.twocaptcha = FakeTwoCaptchaClient(token="solved-token-123")
+
+    request = next(spider.start_requests())
+    response = make_html_response(
+        request.url,
+        """
+        <html>
+            <body>
+                <div class="g-recaptcha" data-sitekey="site-key-123"></div>
+                <p>unusual traffic detected</p>
+            </body>
+        </html>
+        """,
+        request=request,
+        status=403,
+    )
+
+    results = list(spider.parse_search(response))
+
+    assert len(results) == 1
+    retry_request = results[0]
+    assert isinstance(retry_request, Request)
+    assert retry_request.meta["search_retry_count"] == 1
+    assert retry_request.meta["twocaptcha_solve_attempted"] is True
+    assert "g-recaptcha-response=solved-token-123" in retry_request.url
+    assert retry_request.headers["X-Captcha-Token"].decode("utf-8") == "solved-token-123"
+    assert retry_request.cookies["g-recaptcha-response"] == "solved-token-123"
+    assert spider.crawler.stats.values["face/search_twocaptcha_attempt_count"] == 1
+    assert spider.crawler.stats.values["face/search_twocaptcha_solve_count"] == 1
+    assert spider.crawler.stats.values["face/search_twocaptcha_limit"] == 3
+    assert spider.crawler.stats.values["face/search_block_retry_count"] == 1
+
+
+def test_google_search_spider_falls_back_to_standard_retry_when_captcha_solver_fails() -> None:
+    spider = GoogleSearchSpider(
+        id_query="query-captcha-2",
+        subject="tema",
+        query_source="api",
+        max_pages=1,
+        user_agents=["test-agent"],
+        max_block_retries=1,
+    )
+    spider.crawler = build_crawler_stub()
+    spider.twocaptcha = FakeTwoCaptchaClient(token=None)
+
+    request = next(spider.start_requests())
+    response = make_html_response(
+        request.url,
+        """
+        <html>
+            <body>
+                <div class="g-recaptcha" data-sitekey="site-key-123"></div>
+                <p>verify you are human</p>
+            </body>
+        </html>
+        """,
+        request=request,
+        status=429,
+    )
+
+    results = list(spider.parse_search(response))
+
+    assert len(results) == 1
+    retry_request = results[0]
+    assert isinstance(retry_request, Request)
+    assert retry_request.url == request.url
+    assert retry_request.meta["search_retry_count"] == 1
+    assert retry_request.meta["twocaptcha_solve_attempted"] is True
+    assert spider.crawler.stats.values["face/search_twocaptcha_attempt_count"] == 1
+    assert spider.crawler.stats.values["face/search_twocaptcha_failure_count"] == 1
+    assert spider.crawler.stats.values["face/search_block_retry_count"] == 1
+
+
+def test_google_search_spider_marks_blocked_with_twocaptcha_usage_after_solver_attempt() -> None:
+    spider = GoogleSearchSpider(
+        id_query="query-captcha-3",
+        subject="tema",
+        query_source="api",
+        max_pages=1,
+        user_agents=["test-agent"],
+        max_block_retries=0,
+    )
+    spider.crawler = build_crawler_stub()
+    spider.twocaptcha = FakeTwoCaptchaClient(token=None)
+
+    request = next(spider.start_requests())
+    response = make_html_response(
+        request.url,
+        """
+        <html>
+            <body>
+                <div class="g-recaptcha" data-sitekey="site-key-123"></div>
+                <p>captcha required</p>
+            </body>
+        </html>
+        """,
+        request=request,
+        status=403,
+    )
+
+    results = list(spider.parse_search(response))
+
+    assert results == []
+    assert spider.search_blocked_details is not None
+    assert spider.search_blocked_details["twocaptcha_used"] == 0
+    assert spider.search_blocked_details["twocaptcha_attempted"] == 1
+    assert "captcha_challenge" in spider.search_blocked_details["marker_types"]
 
 
 def test_pipelines_persist_records_and_publish_discovered_urls(tmp_path) -> None:
